@@ -61,7 +61,66 @@ size_t nr_free_pages(void) {
     return pmm_manager->nr_free_pages();
 }
 
-//lab2 function1 YOUR CODE
+//lab2 function1 2413410
+
+/* page_init - detect physical memory and build the Page descriptor array */
+static void page_init(void) {
+    extern char end[];
+
+    // get the physical memory range reported by the device tree
+    uint64_t mem_base = get_memory_base();
+    uint64_t mem_size = get_memory_size();
+    if (mem_base == 0 || mem_size == 0 || mem_base != DRAM_BASE) {
+        panic("page_init: invalid physical memory info (base = 0x%lx, size = 0x%lx)",
+              mem_base, mem_size);
+    }
+    uint64_t mem_end = mem_base + mem_size;
+
+    // set the kernel virtual/physical offset before any PADDR() is used
+    va_pa_offset = PHYSICAL_MEMORY_OFFSET;
+
+    // npage is the exclusive upper bound of manageable page numbers. It must
+    // follow the memory end reported by the device tree and must NOT be
+    // truncated by PHYSICAL_MEMORY_END.
+    npage = PPN(mem_end);
+    if (npage <= nbase) {
+        panic("page_init: no manageable physical page");
+    }
+
+    // the descriptor array starts at the page-aligned end of the kernel image
+    pages = (struct Page *)ROUNDUP((uintptr_t)end, PGSIZE);
+    size_t nr_pages = npage - nbase;
+
+    // the area after `end` is not zeroed by kern_init(), so clear the array
+    // explicitly and mark every page frame as reserved
+    memset(pages, 0, nr_pages * sizeof(struct Page));
+    for (size_t i = 0; i < nr_pages; i ++) {
+        SetPageReserved(&pages[i]);
+    }
+
+    // compute the free page range in physical address space: it starts after
+    // the descriptor array and ends at the page-aligned memory end, but never
+    // beyond the physical memory limit of the framework
+    uintptr_t pages_end_pa =
+        PADDR((uintptr_t)pages + nr_pages * sizeof(struct Page));
+    uintptr_t free_start_pa = ROUNDUP(pages_end_pa, PGSIZE);
+    uintptr_t free_end_pa = ROUNDDOWN((uintptr_t)mem_end, PGSIZE);
+    if (free_end_pa > PHYSICAL_MEMORY_END) {
+        free_end_pa = PHYSICAL_MEMORY_END;
+    }
+
+    // only hand over complete free pages; an empty range is legal
+    if (free_end_pa > free_start_pa) {
+        struct Page *base = pa2page(free_start_pa);
+        size_t n = (free_end_pa - free_start_pa) >> PGSHIFT;
+        init_memmap(base, n);
+    }
+
+    cprintf("physical memory map:\n");
+    cprintf("  memory: 0x%016lx, [0x%016lx, 0x%016lx].\n", mem_size, mem_base,
+            mem_base + mem_size - 1);
+}
+
 
 /* pmm_init - initialize the physical memory management */
 void pmm_init(void) {
