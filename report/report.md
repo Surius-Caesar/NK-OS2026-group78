@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |------|------|
 | **实验名称** | Lab 2: 物理内存管理 |
-| **小组成员** | 2413410-韩芳逸、2413993-徐锐、[学号-姓名] |
+| **小组成员** | 2413410-韩芳逸、2413993-徐锐、2413340-戴璐 |
 | **完成日期** | 2026-10-17 |
 
 ### 小组分工
@@ -16,7 +16,7 @@
 |------|----------------|
 | 2413410-韩芳逸 | 功能模块一：物理内存初始化（`page_init()`） |
 | 2413993-徐锐 | 功能模块二：任务一，任务二，任务三 |
-| [学号-姓名] | [待补充] |
+| 2413340-戴璐 | 功能模块二：扩展任务；分支任务 |
 
 实验报告如何分工？
 
@@ -45,7 +45,7 @@
 |------|------------|---------|------|
 | 2413410-韩芳逸 | Claude Code（VS Code 扩展） | DeepSeek-V4-Flash | 用于代码阅读、提示词迭代、编译与 QEMU 验证 |
 | 2413993-徐锐 | Codex(VScode插件)，ChatGPT桌面版 | GPT6 | |
-| [学号-姓名] | | | |
+| 2413340-戴璐 | Codex(VScode插件)，ChatGPT桌面版 |GPT-6 Sol | |
 
 **说明：**
 - **AI 编程工具**：指具体使用的终端工具、编辑器插件、桌面应用或浏览器界面
@@ -281,7 +281,7 @@ physical memory map:
 
 ### 功能模块：物理内存分配功能
 
-**负责人：** 2413993-徐锐，
+**负责人：** 2413993-徐锐，2413340-戴璐
 
 #### 模块功能描述
 
@@ -304,7 +304,11 @@ static void buddy_free_pages(struct Page *base, size_t n);
 static size_t buddy_nr_free_pages(void);
 static void buddy_check(void);
 static void init_pmm_manager(void);//选择Buddy system分配器
-// 任务四：
+// 扩展任务：在页分配器之上新增 SLUB 对象分配接口及自检
+void slub_init(void);
+void *slub_alloc(size_t size);
+void slub_free(void *ptr);
+void slub_check(void);
 ```
 
 **功能说明：**
@@ -600,45 +604,103 @@ buddy system成功通过测试。
 
 
 
-### 任务四
+### 扩展任务 Challenge：任意大小的内存单元 SLUB 分配算法
 
 ##### 最终提示词
 
-以下是经过迭代优化后，最终成功实现该功能的提示词：
+以下两份提示词分别用于生成 SLUB 模块和生成对应测试。接口是本扩展任务拟新增的接口，具体声明和实现需以工程实际代码为准。
+
+*实现 SLUB 的提示词：*
+
+````markdown
+[PROMPT]
+**任务：** 在 `code/lab2/lab2_new` 中从零实现简化的 SLUB 内存对象分配模块，在现有物理页分配器之上支持任意正整数大小的内核对象申请和释放，并接入内核初始化流程。
+**操作要求：** 新建 `kern/mm/slub.c`、`kern/mm/slub.h`，在 `kern/mm/pmm.c` 的 `pmm_init()` 中于物理页管理器初始化和空闲页登记完成后调用 `slub_init()`；只在构建规则确实未收录新文件时调整构建规则。保留 Buddy、Best-Fit、First-Fit 及其测试，不修改 `struct Page`、`struct pmm_manager`、`page_init()` 和页分配公共接口。必须修改项目中的实际文件。
+**输出要求：** 直接写入代码，说明最终接口、大小类别和页回收策略；在具备工具链的环境中报告实际编译与启动结果，无法运行时如实说明。
+[RELY]
+阅读 `pmm.h`、`pmm.c`、`memlayout.h`、`mmu.h`、`buddy_pmm.c`、`kern/init/init.c` 和 `Makefile`，以工程真实定义为准：
+- 页级接口是 `struct Page *alloc_pages(size_t n)`、`void free_pages(struct Page *base, size_t n)` 和 `size_t nr_free_pages(void)`；`PGSIZE` 为一页字节数，`page2pa()` 可得到物理地址，`va_pa_offset` 是现有内核映射的虚实地址偏移。
+- 当前 `pmm_manager` 为 Buddy；其非整幂页请求会向上取整，释放时仍传原请求页数。SLUB 不得自行修改页分配器的空闲块或页数统计。
+- 工程没有可依赖的堆分配器；`kern/mm/*.c` 由现有构建规则收录。使用已有断言、输出和内存操作接口前先核对其声明，不引入标准 C 库或 Linux 内核专有设施。
+[GUARANTEE]
+新增并在 `slub.h` 声明以下公开接口：
+```c
+void slub_init(void);
+void *slub_alloc(size_t size);
+void slub_free(void *ptr);
+```
+允许在 `slub.c` 内定义静态缓存状态、页头/对象元数据和辅助函数；修改现有 `void pmm_init(void)` 以完成初始化接入。所有公开签名与头文件一致，不将对象指针误作 `struct Page *` 交给 `free_pages()`。
+[SPECIFICATION]
+## slub_init
+**Pre-Condition：** 物理页管理器已初始化，`page_init()` 已登记可用页；本模块尚未使用。
+**Post-Condition：** 各大小类别和内部状态可用；不预占无用物理页，原有页分配器状态保持有效。重复初始化若不支持，应显式拒绝而非丢失已分配对象。
+## slub_alloc
+**Pre-Condition：** 模块已初始化；`size` 是调用者所需的有效载荷字节数。
+**Post-Condition：** 成功时返回满足 `sizeof(uintptr_t)` 对齐、可访问至少 `size` 字节且由本模块独占管理的内核虚拟地址；同时存在多个未释放对象时，其有效载荷互不重叠。失败返回 `NULL`，不泄漏页或破坏已有对象及缓存状态。
+**Case 1：** `size == 0` 时返回 `NULL`，状态不变。
+**Case 2：** 小对象由页分配器提供的页面承载，按固定大小类别复用对象槽；同一页面中的对象可独立释放和再次分配，不因某个槽释放而影响其他在用对象。
+**Case 3：** 大于单页可容纳对象上限的申请仍须被支持，可直接向页分配器申请足够的连续页；保存释放时所需的页首页和原请求页数，使任意正整数大小（包括跨页大小）都有明确的归还路径。
+**Case 4：** 大小计算溢出、页分配器无法供页或其他资源不足时返回 `NULL`，已取得但尚未交付的资源必须归还。
+## slub_free
+**Pre-Condition：** `ptr == NULL`，或 `ptr` 是尚未释放且由 `slub_alloc()` 返回的原始对象指针；重复释放和非法指针不属于公开接口的正常调用。
+**Post-Condition：** 对象不再占用，其他在用对象的数据不变；相应槽可复用。当一页中所有小对象均已释放时，该页归还给页分配器；大对象释放时归还其整段页，页数参数与申请时一致。`NULL` 不产生任何操作。
+## pmm_init 与模块约束
+**Pre-Condition：** 原有 `pmm_init()` 负责选择页管理器、登记物理内存并运行页级自检。
+**Post-Condition：** 原有页级行为和启动输出仍正常，SLUB 仅在底层页分配器就绪后初始化，可供后续内核代码调用。
+**Requirements：** 元数据不得覆盖交付给调用者的有效载荷；空闲槽、在用槽和页归属关系始终一致。实现可简化缓存管理，但必须体现“页级分配 + 对象分配”两层结构。算法复杂度不限。执行 `make` 和 `make qemu` 检查编译与启动。
+````
+
+*测试 SLUB 的提示词：*
+
+````markdown
+[PROMPT]
+**任务：** 针对上一份提示词生成的实际 SLUB 模块，在内核中实现可运行的自检，验证不同大小对象的分配、数据隔离、复用和页回收，并给出测试覆盖说明。
+**操作要求：** 阅读生成的 `slub.c/.h`，在 `kern/mm/slub.c` 中实现 `slub_check()`，按需要添加静态测试辅助函数；在 `pmm_init()` 中于 `slub_init()` 之后调用它。保留原有页分配器测试。若发现实现缺陷，只做满足既定接口契约所需的修复，并说明修复原因。必须修改项目中的实际文件。
+**输出要求：** 写入测试代码，报告每组断言检验的性质和真实的编译、QEMU 运行结果；未运行或失败时如实说明，不得仅凭打印成功字样声称通过。
+[RELY]
+以第一份提示词的规格、已生成的 `slub.c/.h` 以及工程中的 `pmm.h`、`memlayout.h`、`pmm.c` 为依据：
+- `slub_alloc(size)` 返回的对象至少可写 `size` 字节，按 `sizeof(uintptr_t)` 对齐；`slub_free(NULL)` 无操作，零大小及大小溢出申请返回 `NULL`。
+- 小对象共享底层页面且逐对象释放，页面完全空闲后归还；大对象可跨页，释放后归还全部占用页。Buddy 对非整幂页请求的真实消耗可能大于请求页数，测试不得假定两者相等。
+- `nr_free_pages()` 可观察底层可用页数；测试必须用真实 SLUB 与页分配接口，不用假实现替代。测试期间分配的对象须全部释放，最终页数恢复到测试前基线。
+[GUARANTEE]
+在 `slub.h` 声明并实现：
+```c
+void slub_check(void);
+```
+由 `pmm_init()` 在 `slub_init()` 后调用。使用工程现有断言检查结果，仅所有断言通过后输出 `slub_check() succeeded!`。测试辅助函数应限制在模块内。
+[SPECIFICATION]
+## 测试入口与状态恢复
+**Pre-Condition：** 页管理器和 SLUB 均已初始化，记录 `nr_free_pages()` 基线。
+**Post-Condition：** 所有测试对象均释放，底层空闲页数恢复基线，原页级自检与内核后续启动不受影响。失败断言必须使测试停止，不得打印成功消息。
+## 不同大小与数据隔离
+**Pre-Condition：** 测试使用有限数量的合法申请，内存足够时继续后续检查。
+**Post-Condition：** 覆盖 1 字节、对齐边界两侧、多个大小类别、单页对象上限两侧、`PGSIZE` 附近和跨页对象；每个成功返回值满足对齐和可写范围，填入不同标记后交错检查，任意两段有效载荷不得重叠。
+## 共享页面、复用与归还
+**Pre-Condition：** 记录页数变化和各对象指针，确保所有对象都有明确归属。
+**Post-Condition：** 多个同类小对象可并存；释放其中一个后，其余对象内容保持不变，再次申请可以正常使用空闲容量；释放该页所有对象后底层页数恢复。跨页大对象释放后对应页数恢复，反复申请与释放不累积泄漏。
+## 边界与失败路径
+**Pre-Condition：** 保留已有对象并记录其内容与可用页数。
+**Post-Condition：** `slub_alloc(0)` 与会造成大小计算溢出的请求返回 `NULL`；`slub_free(NULL)` 不改变状态，已有对象内容仍正确。资源不足测试若需执行，应使用有界、可恢复的分配过程，失败后检查已分配对象仍可释放且页数恢复，不得无上限耗尽内核内存。
+## 混合序列与验收
+**Pre-Condition：** 采用固定且有界的不同大小对象序列。
+**Post-Condition：** 交错申请、写入、部分释放、重新申请和逆序释放后，存活对象内容始终正确，最终空闲页数等于基线。
+**Requirements：** 测试必须由断言验证结果，不能仅打印地址或成功语句。结合实际缓存类别边界选取大小；若实现使用了不同内部类别，按真实边界调整数值但保留上述行为覆盖。执行 `make`、`make qemu`，确认自检实际运行且内核继续启动；简述每组用例如何发现对象重叠、错误复用、跨页归还、计数或泄漏问题。
+````
+
+**测试覆盖及有效性：** `slub_check()` 实际覆盖 1 字节、8/16/32 等类别边界、2048 字节小对象上限、单页有效载荷边界、`PGSIZE` 附近及跨页对象；逐字节写入不同标记并检查地址区间互不重叠，可发现大小类别选择错误、数据覆盖和跨页错误。四个 32 字节对象验证共享一页、单槽释放后其余对象保持不变、已释放槽复用及整页归还。零大小、极大溢出请求和 `NULL` 释放检查失败路径不会改变存活对象。固定有界的混合分配与释放序列验证跨类别交错使用；每组结束后比较 `nr_free_pages()` 与基线，可发现页泄漏或错误归还。
 
 ---
 
 **最终结果：**
+已根据两份提示词新增 `kern/mm/slub.c`、`slub.h`，在 `pmm_init()` 中初始化并运行 `slub_check()`。主机 GCC 语法与告警检查通过；此前使用临时页分配桩运行的分配、数据保持、释放与页数恢复检查也以退出码 0 结束。进一步在本机 Ubuntu/WSL 中运行 `make`，RISC-V 内核编译和链接成功；运行 `timeout 15s make qemu`，依次看到 `buddy_check() succeeded!`、`check_alloc_page() succeeded!`、`slub_check() succeeded!` 及后续 `satp` 地址输出。QEMU 最后由 15 秒超时终止，因为本实验内核启动后保持循环运行；自检断言均已实际通过。
 
-经过0次迭代，该模块最终：
-
-- ✅ 编译通过
-
-- ✅ 功能符合预期
-
----
-
-###### 第一次迭代（如有）
-
-[按照和第一次迭代相同的格式]
-
----
-
-###### 第二次迭代（如有）
-
-[按照和第一次迭代相同的格式]
-
----
-
-###### 第三次迭代（如有）
-
-[按照和第一次迭代相同的格式]
-
+SLUB测试运行结果：
+![测试结果截图](./images/模块2扩展任务SLUB测试.png)
 ---
 
 ### 练习：
 
-**负责人：**2413410-韩芳逸，2413993-徐锐
+**负责人：**2413410-韩芳逸，2413993-徐锐，2413340-戴璐
 
 #### 功能模块一
 
@@ -646,32 +708,90 @@ buddy system成功通过测试。
 
 任务一、任务二、任务三问题回答均见前文[功能模块：物理内存分配功能详述](#功能模块物理内存分配功能)。
 
-任务四...
+SLUB 扩展任务的两份提示词和测试覆盖说明见前文[扩展任务 Challenge：任意大小的内存单元 SLUB 分配算法](#扩展任务-challenge任意大小的内存单元-slub-分配算法)。
 
 ---
 
-### Challenge：[Challenge标题]
+### 分支任务：使用 GDB 调试 QEMU 的 MMU 与页表查询
 
-**负责人：** [学号-姓名]
+**负责人：** 2413340-戴璐
 
-[按照Challenge的具体要求进行解答]
+#### 任务目标与调试环境
+
+本任务在 QEMU 4.1.1 的宿主机进程和运行于其中的 ucore 内核之间建立两层调试：宿主机 `gdb` 查看 QEMU 的 C 实现，`riscv64-unknown-elf-gdb` 通过 QEMU 的 GDB stub 查看 RISC-V 客体指令。目标是沿着一次访存观察软件 TLB 查询、TLB 未命中、Sv39 页表遍历、权限检查、填充 TLB 和最终访问内存的过程，并比较分页开启前后的路径。
+
+在 QEMU 4.1.1 源码目录执行 `make distclean`、`./configure --target-list=riscv32-softmmu,riscv64-softmmu --enable-debug`、`make -j$(nproc)`，依次用于清理旧配置、启用调试符号并编译带符号的模拟器。项目 `Makefile` 的 `QEMU` 指向该源码目录下的 `riscv64-softmmu/qemu-system-riscv64`。本实验只使用此构建结果启动 QEMU。三个终端均先执行 `cd /mnt/d/操作系统/NK-OS2026-group78/code/lab2/lab2_new`。
+
+| 终端 | 命令 | 目的 |
+|---|---|---|
+| 1 | `make debug` | 以 `-s -S` 启动 QEMU，开放 1234 端口并使客体 CPU 暂停，等待双 GDB 接入。 |
+| 2 | `pgrep -af qemu-system-riscv64`；`sudo gdb /home/dailu/qemu-4.1.1/riscv64-softmmu/qemu-system-riscv64`；GDB 内执行 `attach <PID>`、`handle SIGPIPE nostop noprint` | 找到本次 QEMU 进程，将宿主机 GDB 附加到它；忽略不需要中断实验的 `SIGPIPE`。`<PID>` 取 `pgrep` 输出中的进程号。 |
+| 3 | 待终端 2 设置断点并执行 `continue` 后运行 `make gdb` | 连接客体 GDB stub，读取内核符号、寄存器和 RISC-V 指令。 |
+
+宿主机 GDB 停住 QEMU 时，客体 GDB 的 `continue` 或单步可能暂时没有响应；先在终端 2 查看现场并执行 `continue`，客体才会继续。设置条件断点时使用 QEMU 函数形参 `address` 或 `addr`，而客体 GDB 中的 `$pc`、`$satp` 等属于被模拟的 RISC-V CPU，二者不可混用。
+
+#### 调试要求 1：关键调用路径与虚拟地址到物理地址的演示
+
+选择进入 `kern_init` 的**取指访问**作为稳定的目标。项目链接脚本将内核虚拟基址设为 `0xffffffffc0200000`；当前构建的 `obj/kernel.sym` 中 `kern_init` 为 `0xffffffffc02000d8`。`entry.S` 在写入 `satp` 后执行 `sfence.vma`，随后跳转至 `kern_init`。页表最后一项是 `PPN=0x80000`、`VRWXAD` 有效的 1 GiB 叶子项，因此此虚拟地址理论上对应 `0x802000d8`。重编译后须用客体 GDB 的 `p/x kern_init` 替换下面的具体地址。
+
+按以下顺序输入命令并记录现场：
+
+1. 终端 2 的宿主机 GDB 输入 `break riscv_cpu_tlb_fill if address == 0xffffffffc02000d8`，将断点限制为目标虚拟地址的 TLB 填充；输入 `break get_physical_address if addr == 0xffffffffc02000d8`，用于观察从填充函数进入 RISC-V 页表翻译函数；最后输入 `continue`，让 QEMU 恢复执行。
+2. 终端 3 输入 `make gdb`，在客体 GDB 输入 `p/x kern_init` 核对地址，再输入 `break kern_init` 和 `continue`。客体将走到目标取指过程；终端 2 命中断点后，输入 `bt` 查看调用栈，`info args` 查看 `address`、`access_type`、`mmu_idx`，用 `next` 或 `step` 跟踪到 `get_physical_address`。
+3. 在 `get_physical_address` 中输入 `p/x addr`、`p/x env->satp`、`p/x base`、`p levels`、`p ptidxbits`、`p ptesize`；走到页表读取后输入 `p/x pte_addr`、`p/x pte`、`p/x ppn`，走到成功返回前输入 `p/x *physical`、`p/x *prot`。`addr` 是待翻译的客体虚拟地址，`base` 是根页表物理基址，`pte_addr` 是页表项物理地址，`*physical` 是翻译结果所在的物理页基址；本例还要加上页内偏移 `0xd8`，得到完整物理地址 `0x802000d8`。
+4. 返回 `riscv_cpu_tlb_fill` 后，用 `next` 走到 `tlb_set_page`，输入 `p/x pa` 与 `p/x prot`，核对将客体虚拟页、物理页和权限写入 QEMU 软件 TLB。最终在终端 2 `continue`，终端 3 会到达 `kern_init` 断点。
+
+为同时覆盖**数据访存指令**，当前 `obj/kernel.asm` 中 `kern_init+0x16`（`0xffffffffc02000ee`）是 `sd ra,8(sp)`。在客体 GDB 输入 `disassemble kern_init` 确认该指令地址，输入 `break *0xffffffffc02000ee`、`continue` 停在执行前，再输入 `p/x $sp+8` 算出它访问的虚拟地址；当前构建预计为 `0xffffffffc0206ff8`。此时在宿主机 GDB 按 Ctrl+C 暂停 QEMU，输入 `break riscv_cpu_tlb_fill if address == 0xffffffffc0206ff8`、`continue`，再回到客体 GDB 输入 `si` 执行该 `sd`。宿主机断点停下后重复查看 `bt`、`address`、`pa` 与 PTE，预计客体物理地址为 `0x80206ff8`。实际地址应以 `$sp+8` 为准；如果该页已被先前访问填入软件 TLB，重启 QEMU 后先设置条件断点再执行这一段。
+
+QEMU 4.1.1 的可追踪主路径为 `get_page_addr_code`（取指时检查软件 TLB）→ `tlb_fill` → `riscv_cpu_tlb_fill` → `get_physical_address` → `tlb_set_page` → `tlb_set_page_with_attrs`。对数据读写，入口相应是 `load_helper` 或 `store_helper`；TCG 生成的快速路径可能在命中时直接处理，不一定每次都进入 C helper。关键分支包括：`get_page_addr_code` 的 TLB 命中/未命中及 victim TLB 检查；`get_physical_address` 中 M 模式、无 MMU 或 `satp.MODE=Bare` 时直接令物理地址等于输入地址；Sv39 模式选择三级页表；页表项的无效、非叶子、保留标志、权限检查与叶子返回；`riscv_cpu_tlb_fill` 的成功填充或异常分支。发生访问异常时不会填入有效映射。
+
+![调试结果图](<./images/调试要求1.png>)
+
+#### 调试要求 2：单步解释 Sv39 页表翻译
+
+终端 2 的宿主机 GDB 输入 `list get_physical_address` 定位源码，再用 `break get_physical_address if addr == 0xffffffffc02000d8` 仅截取本例；`continue` 后在断点内依次执行 `next`、`p/x env->satp`、`p/x base`、`p levels`、`p ptidxbits`、`p ptesize`。这组命令分别用于推进一行、确认页表根和 Sv39 参数。随后在 `for (i = 0; i < levels; i++, ptshift -= ptidxbits)` 处反复执行 `next`，每轮查看 `p i`、`p ptshift`、`p/x idx`、`p/x pte_addr`、`p/x pte`、`p/x ppn`；这些值分别表明当前层级、索引位移、虚拟地址中的该级索引、要读取的页表项物理地址、页表项内容和页表项内的物理页号。
+
+Sv39 下 `levels=3`、`ptidxbits=9`、`ptesize=8`：常规三级遍历依次使用 VPN[2]、VPN[1]、VPN[0]，每层以 `pte_addr = base + idx * 8` 定位页表项，`ldq_phys` 从**客体物理内存**读取 64 位 PTE。若 PTE 有效但 `R/W/X` 均为零，说明它指向下一级页表，令 `base = ppn << 12` 后进入下一轮；若 `R/W/X` 表明叶子，则检查 U/S 权限、读写执行权限、超级页对齐和 A/D 位，然后把叶子 PPN 与未被叶子覆盖的 VPN 低位组合成物理页基址。若 PTE 无效或权限不符，返回失败并触发相应异常。本工程的启动页表仅有根页表最后一项为 1 GiB 叶子，因此目标地址在**第一轮**就结束，不应为了凑三轮而声称它读到了三层 PTE；源码的三级循环是最大遍历深度。
+
+本例可在 GDB 中再输入 `p/x ((addr >> 30) & 0x1ff)` 验证根页表索引为 `0x1ff`，输入 `p/x pte` 验证叶子项为 `0x200000cf`，输入 `p/x *physical` 验证物理页基址为 `0x80200000`。`0xd8` 为 `kern_init` 的页内偏移。若当前构建符号位置变化，则偏移随之变化，但页表映射规则不变。
+
+![测试结果截图](./images/调试要求2.png)
+![测试结果截图](./images/调试要求2图2.png)
+
+#### 调试要求 3：查找 QEMU 模拟 TLB 的 C 代码
+
+先在 QEMU 源码根目录运行 `rg -n 'get_page_addr_code|load_helper|store_helper|tlb_hit|victim_tlb_hit|tlb_fill|tlb_set_page' accel/tcg/cputlb.c target/riscv/cpu_helper.c`，以定位入口、比较、未命中回填和 RISC-V 目标实现。宿主机 GDB 输入 `break get_page_addr_code if addr == 0xffffffffc02000d8`、`continue`，让目标取指停在软件 TLB 查询函数；在断点处输入 `next`、`p/x addr`、`p mmu_idx`、`p/x entry->addr_code`。继续单步至 `tlb_hit(entry->addr_code, addr)`，查看未命中后是否先调用 `victim_tlb_hit`，若也未命中，则单步到 `tlb_fill`。在 `riscv_cpu_tlb_fill` 中输入 `bt`、`p/x address`、`p/x pa`，随后单步到 `tlb_set_page`，观察映射回填。
+
+`cputlb.c` 中，取指用 `addr_code`，读数据用 `addr_read`，写数据用 `addr_write`；`tlb_hit` 对比目标虚拟页与缓存标签。主 TLB 未命中后还检查 victim TLB；两者均未命中才进入 `tlb_fill`，通过 CPU 类的 `tlb_fill` 回调进入 `riscv_cpu_tlb_fill`。填充成功后，`tlb_set_page_with_attrs` 将虚拟页标签、访问权限和到宿主机内存的 `addend` 写入 QEMU 软件 TLB。此后同一页的访问可以命中缓存；但 TCG 的生成代码有快速查询路径，所以宿主机 GDB 的 C 断点未再次命中，不能单凭此事断定没有查 TLB。若要观察数据访存，在客体 GDB 对一条 `ld`/`sd` 指令断下并根据基址寄存器与立即数算出有效地址，然后改用 `break load_helper if addr == <有效地址>` 或 `break store_helper if addr == <有效地址>`；是否能命中 C helper 取决于该次访问是否走慢路径。
+
+![测试结果截图](./images/调试要求3.png)
+![alt text](./images/调试要求3图2.png)
+说明主 TLB、 victim TLB未命中
+命中已设置的 riscv_cpu_tlb_fill 断点后，输入 bt 8、info args，结果如下图所示，证明调用链进入 RISC-V 的翻译函数：
+![alt text](./images/调试要求3图3.png)
+#### 调试要求 4：QEMU 软件 TLB 与真实 CPU TLB 的逻辑区别
+
+两者都缓存地址转换的结果，减少重复页表遍历，但 QEMU 的软件 TLB 还服务于**模拟器自身的访问加速**。在 QEMU 4.1.1 中，即使 RISC-V 处于 M 模式或 `satp.MODE=Bare`，`get_physical_address` 也会直接返回 `*physical = addr`，随后 `riscv_cpu_tlb_fill` 仍可调用 `tlb_set_page`，把这一恒等映射和宿主机 RAM 指针偏移等信息缓存起来。真实 CPU 在未开启分页时无需通过页表完成虚实转换；硬件内部可能仍有缓存或访问检查机制，但不能把 QEMU 这个软件缓存等同于真实 CPU 的页表 TLB。
+
+对照方法是在终端 3 的客体 GDB 输入 `break kern_entry`、`continue`，停在 `entry.S` 写 `satp` 之前的 `sd a0, 0(t0)`，输入 `x/12i $pc`、`p/x $satp`、`p/x $t0`；然后在终端 2 以 `break riscv_cpu_tlb_fill` 和 `break get_physical_address` 跟踪该物理地址的读写，观察恒等返回。再在客体单步越过 `csrw satp` 与 `sfence.vma`，对 `kern_init` 的高地址取指重复要求 1 的条件断点，比较 Sv39 分支、PTE 读取及虚实地址不同的结果。注意启动早期还有 OpenSBI 的 M 模式访问，最好用 `mmu_idx`、访问地址和客体 `$pc` 一起辨认目标，不要把任意早期访存误当作 ucore 的指令。
+
+#### 调试要求 5：调试中值得注意的细节
+
+源码分析显示三个容易混淆的地方。第一，`-S` 停的是客体 CPU，宿主 QEMU 进程仍可被 GDB 附加；终端 2 停住整个 QEMU 时，终端 3 连接或单步可能像“卡住”。第二，启动页表是根级 1 GiB 叶子，`for` 的上限为三轮不代表每次都实际走三轮。第三，`*physical` 是物理**页基址**，完整访存地址还须加页内偏移；而 QEMU TLB 中的 `addend` 是客体地址到宿主机指针的加速量，也不是客体物理地址。这些区别解释了为何单步时会同时看到虚拟地址、客体物理地址和宿主机地址。
+
+#### 调试要求 6：大模型辅助分析记录
+
+本次整理中向大模型提供了实验指导书、当前 `Makefile`、`entry.S`、链接脚本和 `obj/kernel.sym`，要求核对 QEMU 4.1.1 中 TLB 查询到 Sv39 查表的函数路径，并为前三项要求列出 GDB 命令及每条命令的目的。最初的问题是“访存一定先经过哪段 C 代码，为什么有时断点没有命中”。随后对照 QEMU 4.1.1 的 `cputlb.c`、`target/riscv/cpu_helper.c` 确认：取指的 C 慢路径在 `get_page_addr_code`，数据访存可进入 `load_helper`/`store_helper`，未命中通过目标 CPU 回调填充；命中时也可能由 TCG 生成代码直接处理。另一个疑问是“Sv39 是否必须读三层页表”，通过检查工程启动页表和 QEMU 的叶子判断，确认本例根级就结束。大模型用于定位代码和形成可复现步骤，地址、分支条件和结论仍以工程文件及对应版本源码核对；运行时寄存器数值和截图应以实际 GDB 会话为准。
+
+**源码依据：** [QEMU 4.1.1 `accel/tcg/cputlb.c`](https://github.com/qemu/qemu/blob/v4.1.1/accel/tcg/cputlb.c)、[QEMU 4.1.1 `target/riscv/cpu_helper.c`](https://github.com/qemu/qemu/blob/v4.1.1/target/riscv/cpu_helper.c)、本工程 `kern/init/entry.S`、`tools/kernel.ld` 和 `obj/kernel.sym`。
 
 ---
 
-## 五、测试与验证
-
-<!-- 根据该实验的具体情况，提供完整的测试运行截图，应包含：
-- 编译及运行成功的输出（make qemu），可能有多个
-- 测试通过的结果（make grade），只有一个
--->
 
 
 
-**测试截图：**
 
-![测试结果截图](./images/test_result.png)
-
-> 截图待补充：`make qemu` 的完整输出、`make grade` 的 `check page init: OK`、以及多内存规模运行结果。
+内存分配模块原有的编译、运行和 `make grade` 验证由对应模块负责人补充。
 
 ---
 
