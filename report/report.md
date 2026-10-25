@@ -791,16 +791,16 @@ Sv39 下 `levels=3`、`ptidxbits=9`、`ptesize=8`：常规三级遍历依次使�
 ---
 
 ## 五、测试与验证
+make qemu结果：
 
-<!-- 根据该实验的具体情况，提供完整的测试运行截图，应包含：
-
-- 编译及运行成功的输出（make qemu），可能有多个
-
-  第一张，first_fit，第二张，best_fit，第三张，buddy_system,后面还有的话我（徐锐）不知道需要那些
-
-- 测试通过的结果（make grade），只有一个
-
-内存分配模块原有的编译、运行和 `make grade` 验证由对应模块负责人补充。
+1、firstfit
+![alt text](./images/make_qemu(firstfit).png)
+2、bestfit
+![alt text](./images/make_qemu（bestfit）.png)
+3、buddy system
+![alt text](./images/make_qemu(buddysystem).png)
+make grade结果：
+![alt text](<./images/make_grade结果图.png>)
 
 ---
 
