@@ -43,7 +43,7 @@
 
 | 成员 | AI 编程工具 | 底层模型 | 备注 |
 |------|------------|---------|------|
-| 2413410-韩芳逸 | Claude Code（VS Code 扩展） | DeepSeek-V4-Flash | 用于代码阅读、提示词迭代、编译与 QEMU 验证 |
+| 2413410-韩芳逸 | Claude Code（VS Code 扩展） | DeepSeek-V4-Flash | |
 | 2413993-徐锐 | Codex(VScode插件)，ChatGPT桌面版 | GPT6 | |
 | 2413340-戴璐 | Codex(VScode插件)，ChatGPT桌面版 |GPT-6 Sol | |
 
