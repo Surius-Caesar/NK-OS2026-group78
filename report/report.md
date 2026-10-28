@@ -169,7 +169,7 @@ __alltraps:
 
 - :white_check_mark: 编译通过
 
-  ![](.\images\module1.png)
+  ![](./images/module1.png)
 
   `make obj/kern/trap/trapentry.o` 成功生成了目标文件。
 
