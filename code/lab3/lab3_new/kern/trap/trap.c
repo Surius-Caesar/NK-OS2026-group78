@@ -6,10 +6,14 @@
 #include <memlayout.h>
 #include <mmu.h>
 #include <riscv.h>
+#include <sbi.h>
 #include <stdio.h>
 #include <trap.h>
 
 #define TICK_NUM 100
+#define SHUTDOWN_AFTER 10
+
+static int tick_output_count = 0;
 
 static void print_ticks() {
     cprintf("%d ticks\n", TICK_NUM);
@@ -80,7 +84,52 @@ void print_regs(struct pushregs *gpr) {
     cprintf("  t6       0x%08x\n", gpr->t6);
 }
 
-//lab3 function2 YOUR CODE
+//lab3 function2 MY CODE:2413410
+void interrupt_handler(struct trapframe *tf) {
+    intptr_t cause = (tf->cause << 1) >> 1;
+    switch (cause) {
+    case IRQ_S_TIMER:
+        // 设置下一次时钟事件，保证时钟中断持续产生
+        clock_set_next_event();
+        ticks++;
+        if (ticks % TICK_NUM == 0) {
+            print_ticks();
+            if (++tick_output_count >= SHUTDOWN_AFTER) {
+                sbi_shutdown();
+            }
+        }
+        break;
+    case IRQ_U_SOFT:
+        cprintf("User software interrupt\n");
+        break;
+    case IRQ_S_SOFT:
+        cprintf("Supervisor software interrupt\n");
+        break;
+    case IRQ_M_SOFT:
+        cprintf("Machine software interrupt\n");
+        break;
+    case IRQ_U_TIMER:
+        cprintf("User timer interrupt\n");
+        break;
+    case IRQ_M_TIMER:
+        cprintf("Machine timer interrupt\n");
+        break;
+    case IRQ_U_EXT:
+        cprintf("User external interrupt\n");
+        break;
+    case IRQ_S_EXT:
+        cprintf("Supervisor external interrupt\n");
+        break;
+    case IRQ_M_EXT:
+        cprintf("Machine external interrupt\n");
+        break;
+    default:
+        cprintf("Unknown interrupt: cause %d\n", (int)cause);
+        print_trapframe(tf);
+        break;
+    }
+}
+
 
 
 static inline void trap_dispatch(struct trapframe *tf) {
