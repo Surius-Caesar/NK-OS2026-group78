@@ -16,7 +16,7 @@
 |------|----------------|
 | 2413993-徐锐 | 功能模块1 |
 | 2413340-戴璐 | [练习或模块名称] |
-| 2413410-韩芳逸 | [练习或模块名称] |
+| 2413410-韩芳逸 | 功能模块2（interrupt_handler） |
 
 实验报告如何分工？
 
@@ -40,7 +40,7 @@
 |------|------------|---------|------|
 | 2413993-徐锐 | codex VScode插件，ChatGPT桌面版 | GPT6 |  |
 | 2413340-戴璐 | | | |
-| 2413410-韩芳逸 | | | |
+| 2413410-韩芳逸 |claude vscode插件 | deepseek-v4-flash| |
 
 **说明：**
 - **AI 编程工具**：指具体使用的终端工具、编辑器插件、桌面应用或浏览器界面
@@ -178,6 +178,98 @@ __alltraps:
 - :question: 功能符合预期
 
   此处尚未验证Trap功能
+
+---
+
+### 功能模块：中断处理（interrupt_handler）
+
+**负责人：** 2413410-韩芳逸
+
+#### 模块功能描述
+
+**需要实现/修改的函数：**
+
+```c
+void interrupt_handler(struct trapframe *tf);
+```
+
+**功能说明：**
+
+- **该模块在整个系统中的作用**：
+
+  对 Trap 入口传递过来的中断按 `tf->cause` 进行分类处理，是中断从“进入内核”到“完成具体处理”的核心环节。功能模块二中的 `exception_handler()` 由组员负责，本部分只涉及中断处理。
+
+- **需要处理的主要场景**：
+
+  时钟中断需要设置下一次时钟事件、累计 `ticks`、每 `TICK_NUM` 次输出统计信息，并在累计输出达到 `SHUTDOWN_AFTER` 后关机；软件中断和外部中断只需给出类型提示；无法识别的中断输出提示并打印完整 Trap frame 以辅助调试。
+
+- **与其他模块的交互关系**：
+
+  `trap_dispatch()` 判断 `tf->cause` 最高位为 1 后调用本函数；本函数依赖 `clock_set_next_event()`、`ticks`、`print_ticks()`、`print_trapframe()` 和 `sbi_shutdown()`；处理完成后返回，由 `__trapret` 恢复现场并通过 `sret` 回到原执行流。
+
+#### 最终提示词
+
+以下是经过迭代优化后，最终成功实现该功能的提示词：
+
+````markdown
+## module2
+### [PROMPT]
+**任务**：修改 `kern/trap/trap.c`，实现 Lab3 功能模块二中的中断处理 `interrupt_handler()`，使内核能对时钟中断、各类软件/外部中断进行正确分类与处理，并能在处理完成后顺利返回 `__trapret`。
+**操作要求**：必须修改项目中的实际文件。仅在 `//lab3 function2 YOUR CODE` 标记处补全 `interrupt_handler()`，并将该注释中的 `YOUR CODE` 替换为 `MY CODE:2413410`。保留其他所有已有函数与代码，不修改函数签名，不修改 `print_ticks()`、`trap_dispatch()`、`trap()` 等规定以外的函数；`exception_handler()` 不在本次任务范围内，不要实现或修改。
+**输出要求**：直接进行文件操作，使用下面 [RELY]、[GUARANTEE]、[SPECIFICATION] 的信息，不引入无关功能。
+### [RELY]
+- `kern/trap/trap.h`：`struct trapframe { struct pushregs gpr; uintptr_t status, epc, badvaddr, cause; }`。
+- `tf->cause` 最高位为 1 表示中断，低 63 位为中断原因编号。
+- `kern/trap/trap.c` 已有：`#define TICK_NUM 100`、`static void print_ticks()`（输出 `100 ticks`）、`void print_trapframe(struct trapframe *tf)`。
+- `libs/riscv.h`：`IRQ_U_SOFT=0`、`IRQ_S_SOFT=1`、`IRQ_M_SOFT=3`、`IRQ_U_TIMER=4`、`IRQ_S_TIMER=5`、`IRQ_M_TIMER=7`、`IRQ_U_EXT=8`、`IRQ_S_EXT=9`、`IRQ_M_EXT=11`。
+- `kern/driver/clock.h`：`extern volatile size_t ticks;`、`void clock_set_next_event(void);`。
+- `libs/sbi.h`：`void sbi_shutdown(void);`。
+- 框架未预定义 `SHUTDOWN_AFTER`，需要在本文件中定义（取 10）。
+### [GUARANTEE]
+必须实现的接口（位置在 `trap_dispatch()` 之前）：
+```c
+void interrupt_handler(struct trapframe *tf);
+```
+可以添加 `static` 辅助变量或文件内宏，不得改变上述签名，不得新增其他对外接口。
+### [SPECIFICATION]
+#### interrupt_handler
+**Pre-Condition**：`tf` 指向 `__alltraps` 保存的完整 Trap frame，`tf->cause` 最高位为 1，低 63 位为中断原因。
+**Post-Condition**：对应中断已被处理；返回后 `trap()` 正常返回到 `__trapret`，上下文与 `ticks` 状态一致。
+**Case 1（时钟中断 `IRQ_S_TIMER`）**：调用 `clock_set_next_event()` 设置下一次时钟事件；`ticks` 自增 1；当 `ticks % TICK_NUM == 0` 时调用 `print_ticks()` 输出一次统计信息；累计统计输出次数达到 `SHUTDOWN_AFTER` 后调用 `sbi_shutdown()`。
+**Case 2（软件中断）**：对 `IRQ_U_SOFT`、`IRQ_S_SOFT`、`IRQ_M_SOFT` 分别输出对应的提示信息，其中 `IRQ_S_SOFT` 必须输出 `Supervisor software interrupt`。
+**Case 3（其他可识别的中断）**：对用户/机器时钟中断、用户/监管者/机器外部中断输出对应的提示信息即可，不做额外处理。
+**Case 4（无法识别的中断）**：输出 `Unknown interrupt: cause <原因编号>`，并调用 `print_trapframe(tf)` 输出完整 Trap frame。
+**Requirements**：`ticks` 每收到一次时钟中断必须自增，且必须先设置下一次时钟事件再返回，否则只能收到一次时钟中断。
+````
+
+#### 实现迭代过程
+
+本模块的实现经历了 1 次迭代，过程如下：
+
+---
+
+##### 第一次迭代
+
+提示词一次生成后，`interrupt_handler()` 的逻辑即满足要求，未出现功能性问题。
+
+**遇到的问题：**
+
+
+**问题解决策略：**
+
+
+**最终结果：**
+
+经过 1 次迭代，该模块最终：
+
+- `interrupt_handler()` 实现完成
+- 待 `exception_handler()` 实现后，进行整机编译、`make qemu` 与 `make grade` 测试并补充截图
+
+**关键改进点总结（如有）：**
+
+1. [RELY] 中写明了 `tf->cause` 最高位为 1 表示中断的判定方式，避免 AI 直接拿带符号的 `cause` 做 `switch`。
+2. [SPECIFICATION] 中明确要求先调用 `clock_set_next_event()` 再返回，避免只收到一次时钟中断。
+3. 依据评分脚本的判定字符串，明确规定了 `Supervisor software interrupt`、`Unknown interrupt: cause <编号>` 等输出格式，以及未知中断需同时调用 `print_trapframe(tf)`。
 
 ---
 
