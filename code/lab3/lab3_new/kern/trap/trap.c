@@ -130,7 +130,23 @@ void interrupt_handler(struct trapframe *tf) {
     }
 }
 
-
+void exception_handler(struct trapframe *tf) {
+    switch (tf->cause) {
+    case CAUSE_ILLEGAL_INSTRUCTION:
+        cprintf("Illegal instruction at 0x%08x\n", tf->epc);
+        // 根据指令低两位判断长度，跳过触发异常的指令。
+        tf->epc += (*(const uint16_t *)tf->epc & 0x3) == 0x3 ? 4 : 2;
+        break;
+    case CAUSE_BREAKPOINT:
+        cprintf("Breakpoint at 0x%08x\n", tf->epc);
+        // 兼容普通断点指令与压缩断点指令。
+        tf->epc += (*(const uint16_t *)tf->epc & 0x3) == 0x3 ? 4 : 2;
+        break;
+    default:
+        print_trapframe(tf);
+        break;
+    }
+}
 
 static inline void trap_dispatch(struct trapframe *tf) {
     if ((intptr_t)tf->cause < 0) {

@@ -15,7 +15,7 @@
 | 成员 | 负责的练习/模块 |
 |------|----------------|
 | 2413993-徐锐 | 功能模块1 |
-| 2413340-戴璐 | [练习或模块名称] |
+| 2413340-戴璐 | 功能模块2（exception_handler） |
 | 2413410-韩芳逸 | 功能模块2（interrupt_handler） |
 
 实验报告如何分工？
@@ -39,7 +39,7 @@
 | 成员 | AI 编程工具 | 底层模型 | 备注 |
 |------|------------|---------|------|
 | 2413993-徐锐 | codex VScode插件，ChatGPT桌面版 | GPT6 |  |
-| 2413340-戴璐 | | | |
+| 2413340-戴璐 | codex VScode插件| GPT6| |
 | 2413410-韩芳逸 |claude vscode插件 | deepseek-v4-flash| |
 
 **说明：**
@@ -273,82 +273,94 @@ void interrupt_handler(struct trapframe *tf);
 
 ---
 
-### 功能模块：[模块名称]
+### 功能模块：异常处理（exception_handler）
 
-**负责人：** [学号-姓名]
+**负责人：** 2413340-戴璐
 
 #### 模块功能描述
 
 **需要实现/修改的函数：**
 
 ```c
-// 列出本模块涉及的所有函数签名
-void example_function(void);
-int another_function(int arg);
+void exception_handler(struct trapframe *tf);
 ```
 
 **功能说明：**
 
-[简要描述该模块的功能，包括：
-- 该模块在整个系统中的作用
-- 需要处理的主要场景
-- 与其他模块的交互关系]
+``exception_handler()`` 负责处理实验要求的异常，其中非法指令异常和断点异常需要输出规定格式的信息，并根据对应指令的长度正确更新 tf->epc，使 Trap 返回以后不会重复执行已经触发异常的指令；其他未要求具体处理的异常则使用已有的 ``print_trapframe(tf) ``作为兜底处理。这个模块完成后，系统应能够对实验要求的时钟中断、非法指令异常和断点异常进行正确识别和处理。
 
 #### 最终提示词
 
 以下是经过迭代优化后，最终成功实现该功能的提示词：
 
 ````markdown
+### [PROMPT]
 
-[按照提示词模板，给出具体的提示词]
+**任务**：在 `lab3_new/kern/trap/trap.c` 中实现 Lab3 功能模块二的 `exception_handler()`。根据 `tf->cause` 处理非法指令异常、断点异常及其他异常，使已处理的异常能够衔接 Trap 返回流程。
+
+**操作要求**：修改项目中的实际文件，仅在 `trap_dispatch()` 之前补全 `exception_handler()`。保留已有代码；`interrupt_handler()`、`trap_dispatch()`、`trap()` 等函数不在本次修改范围内。需要添加的代码注释使用中文。
+
+**输出要求**：直接完成文件修改，并说明异常分类、输出格式和 `tf->epc` 更新方式；使用以下 [RELY]、[GUARANTEE]、[SPECIFICATION] 中的信息，不引入无关功能。
+
+### [RELY]
+
+- `kern/trap/trap.h`：`struct trapframe` 包含 `cause`、`epc` 等字段。`cause` 表示 Trap 原因，`epc` 记录触发异常的指令地址。
+- `kern/trap/trap.c`：`trap()` 经 `trap_dispatch()` 将异常交给 `exception_handler(tf)`；已有 `print_trapframe(struct trapframe *tf)` 可输出完整 Trap frame，`cprintf()` 可输出提示信息。
+- `libs/riscv.h`：`CAUSE_ILLEGAL_INSTRUCTION` 表示非法指令异常，`CAUSE_BREAKPOINT` 表示断点异常。
+- 异常处理函数返回后，`__trapret` 根据 Trap frame 中的 `epc` 恢复执行位置。RISC-V 指令可能为 16 位压缩指令或 32 位指令，指令长度应依据触发异常的指令编码判断。
+
+### [GUARANTEE]
+
+必须实现的接口（位置在 `trap_dispatch()` 之前）：
+
+```c
+void exception_handler(struct trapframe *tf);
+```
+
+- 非法指令异常和断点异常须输出对应提示，并将 `tf->epc` 更新到触发异常的指令之后。
+- 其他异常调用 `print_trapframe(tf)` 作为兜底处理，不擅自改变其执行位置。
+- “整个模块不得修改函数签名，也不得修改 `trap.c` 中规定以外的其他函数。”
+
+### [SPECIFICATION]
+
+#### exception_handler
+
+**Pre-Condition**：`tf` 指向 Trap 入口保存的完整 Trap frame；`trap_dispatch()` 已判定当前 Trap 为异常，`tf->cause` 为异常原因，`tf->epc` 指向触发异常的指令。
+
+**Post-Condition**：异常已按类型处理。对于非法指令和断点异常，`tf->epc` 指向下一条指令；函数返回后，执行流可经 `trap()`、`__trapret` 恢复。对于其他异常，已输出完整 Trap frame。
+
+**Case 1（非法指令异常 `CAUSE_ILLEGAL_INSTRUCTION`）**：输出以 `Illegal instruction at` 开头、包含异常指令地址的提示信息；根据该指令的实际长度将 `tf->epc` 增加 2 或 4 字节，避免返回后再次执行该指令。
+
+**Case 2（断点异常 `CAUSE_BREAKPOINT`）**：输出以 `Breakpoint at` 开头、包含断点指令地址的提示信息；根据触发断点的指令实际长度更新 `tf->epc`，兼顾压缩断点指令与普通断点指令。
+
+**Case 3（其他异常）**：调用 `print_trapframe(tf)` 输出完整现场；不将未规定处理的异常当作非法指令或断点异常，也不统一增加 `tf->epc`。
+
+**Requirements**：判断指令长度时遵循 RISC-V 指令编码规则，不对所有异常固定使用相同的 `epc` 偏移量；输出异常地址时使用更新前的 `tf->epc`。
 
 ````
 
 #### 实现迭代过程
 
-本模块的实现经历了 [N] 次迭代，过程如下：
+本模块的实现经历了 1 次迭代，过程如下：
 
 ---
 
 ##### 第一次迭代
 
-如果设计的prompt生成代码后出现问题：
+提示词一次生成后，`interrupt_handler()` 的逻辑即满足要求，未出现功能性问题。
 
-**遇到的问题：**
-- 问题1：问题描述、错误信息和原因分析
-- 问题2：问题描述、错误信息和原因分析
-
-**问题解决策略：**
-- 针对问题1：[说明如何修改提示词]
-- 针对问题2：[说明如何修改提示词]
-
-如果没有问题：
 
 **最终结果：**
 
-经过 [N] 次迭代，该模块最终：
+经过 1 次迭代，该模块最终：
 - ✅ 编译通过
 - ✅ 所有相关测试通过
 - ✅ 功能符合预期
 
-**关键改进点总结（如有）：**
-1. [改进点1：例如，在 [RELY] 中补充了完整的系统调用号定义]
-2. [改进点2：例如，在 [SPECIFICATION] 中明确了异常处理的边界条件]
-3. [改进点3：例如，增加了对用户指针合法性检查的要求]
 
 ---
 
-##### 第二次迭代（如有）
 
-[按照和第一次迭代相同的格式]
-
----
-
-##### 第三次迭代（如有）
-
-[按照和第一次迭代相同的格式]
-
----
 
 ### 练习：
 
