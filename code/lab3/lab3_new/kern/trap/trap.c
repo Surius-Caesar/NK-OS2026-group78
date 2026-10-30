@@ -86,14 +86,17 @@ void print_regs(struct pushregs *gpr) {
 
 //lab3 function2 MY CODE:2413410
 void interrupt_handler(struct trapframe *tf) {
+    // scause 最高位表示这是中断；去掉该标志位，取得中断原因编号供 switch 分类。
     intptr_t cause = (tf->cause << 1) >> 1;
     switch (cause) {
     case IRQ_S_TIMER:
         // 设置下一次时钟事件，保证时钟中断持续产生
         clock_set_next_event();
+        // 每次时钟中断只增加一次计数；每满 TICK_NUM 次输出一次统计。
         ticks++;
         if (ticks % TICK_NUM == 0) {
             print_ticks();
+            // 按输出次数计数，达到实验设定次数后通过 SBI 关闭模拟机。
             if (++tick_output_count >= SHUTDOWN_AFTER) {
                 sbi_shutdown();
             }
@@ -134,12 +137,13 @@ void exception_handler(struct trapframe *tf) {
     switch (tf->cause) {
     case CAUSE_ILLEGAL_INSTRUCTION:
         cprintf("Illegal instruction at 0x%08x\n", tf->epc);
-        // 根据指令低两位判断长度，跳过触发异常的指令。
+        // RISC-V 指令低两位为 11 表示 32 位指令，否则是 16 位压缩指令；
+        // 推进 sepc 保存值，避免 sret 后再次执行同一条非法指令。
         tf->epc += (*(const uint16_t *)tf->epc & 0x3) == 0x3 ? 4 : 2;
         break;
     case CAUSE_BREAKPOINT:
         cprintf("Breakpoint at 0x%08x\n", tf->epc);
-        // 兼容普通断点指令与压缩断点指令。
+        // ebreak 也可能是 16 位压缩编码；按实际指令长度跳过断点指令。
         tf->epc += (*(const uint16_t *)tf->epc & 0x3) == 0x3 ? 4 : 2;
         break;
     default:

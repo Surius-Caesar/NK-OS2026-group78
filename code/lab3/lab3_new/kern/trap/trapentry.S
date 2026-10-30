@@ -58,11 +58,16 @@
 
     #lab3 function1 MY CODE:2413993
 
+    # Trap frame 的第 32、33 个槽分别保存 sstatus 和 sepc；
+    # 先恢复 CSR，sret 才能使用处理函数可能更新过的返回状态和地址。
     LOAD x5, 32*REGBYTES(sp)
     csrw sstatus, x5
     LOAD x5, 33*REGBYTES(sp)
     csrw sepc, x5
 
+    # x2(sp) 不能像其他通用寄存器一样从普通槽恢复：
+    # SAVE_ALL 把分配 Trap frame 之前的原始 sp 保存到了第 2 个槽。
+    # 在恢复 sp 之前，逐一从当前帧取回其余通用寄存器。
     LOAD x1, 1*REGBYTES(sp)
     LOAD x3, 3*REGBYTES(sp)
     LOAD x4, 4*REGBYTES(sp)
@@ -93,6 +98,7 @@
     LOAD x29, 29*REGBYTES(sp)
     LOAD x30, 30*REGBYTES(sp)
     LOAD x31, 31*REGBYTES(sp)
+    # 最后恢复原始栈指针；此后当前 Trap frame 不再通过 sp 访问。
     LOAD sp, 2*REGBYTES(sp)
 
     .endm
@@ -103,8 +109,9 @@ __alltraps:
     SAVE_ALL
 
     #lab3 function1 MY CODE:2413993
-    # sp should be the same as before "jal trap"
+    # 当前 sp 指向完整 Trap frame，按 RISC-V 调用约定作为 trap(tf) 的首参数。
     mv a0, sp
+    # trap() 返回后继续落入 __trapret，由 RESTORE_ALL 和 sret 恢复原执行流。
     call trap
 
     .globl __trapret

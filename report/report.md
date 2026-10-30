@@ -20,6 +20,8 @@
 
 实验报告如何分工？
 
+见下自述。
+
 ---
 
 ## 一、实验目的
@@ -360,21 +362,13 @@ void exception_handler(struct trapframe *tf);
 
 ---
 
-
-
 ### 练习：
 
 **负责人：** 2413993-徐锐
 
 **功能模块1**：见前[功能模块：Trap 上下文恢复与 Trap 入口功能](#功能模块：Trap 上下文恢复与 Trap 入口功能)
 
----
-
-### Challenge：[Challenge标题]
-
-**负责人：** [学号-姓名]
-
-[按照Challenge的具体要求进行解答]
+**功能模块2**：见前[功能模块：中断处理（interrupt_handler）](#功能模块：中断处理（interrupt_handler）)与[功能模块：异常处理（exception_handler）](#功能模块：异常处理（exception_handler）)
 
 ---
 
@@ -382,12 +376,18 @@ void exception_handler(struct trapframe *tf);
 
 <!-- 根据该实验的具体情况，提供完整的测试运行截图，应包含：
 - 编译及运行成功的输出（make qemu），可能有多个
+
+  ![](./images/makeqemu.png)
+
 - 测试通过的结果（make grade），只有一个
--->
 
-**测试截图：**
+  这里内部分成三部分，较长，故有三张图（虽然是仅一次make grade）
 
-![测试结果截图](./images/test_result.png)
+  ![](./images/grade1.png)
+
+  ![](./images/grade2.png)
+
+  ![](./images/grade3.png)
 
 ---
 
