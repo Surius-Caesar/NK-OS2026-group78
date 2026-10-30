@@ -374,7 +374,8 @@ void exception_handler(struct trapframe *tf);
 
 ## 五、测试与验证
 
-<!-- 根据该实验的具体情况，提供完整的测试运行截图，应包含：
+<!-- 根据该实验的具体情况，提供完整的测试运行截图，应包含：-->
+
 - 编译及运行成功的输出（make qemu），可能有多个
 
   ![](./images/makeqemu.png)
