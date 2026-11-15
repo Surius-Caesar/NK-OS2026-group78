@@ -14,7 +14,7 @@
 
 | 成员 | 负责的练习/模块 |
 |------|----------------|
-| 2413993-徐锐 | 练习3 |
+| 2413993-徐锐 | 练习3和challenge |
 | 2413340-戴璐 | 练习1和实验报告其他部分 |
 | 2413410-韩芳逸 | 练习2和测试部分|
 
@@ -39,7 +39,7 @@
 
 | 成员 | AI 编程工具 | 底层模型 | 备注 |
 |------|------------|---------|------|
-| 2413993-徐锐 | [例如：Cline（VS Code插件） / Claude Code（终端 Agent） / DeepSeek Harness等] | [例如：Claude Sonnet 4.5 / GPT-5.5 / DeepSeek-V4-Flash等] | [可选：特殊配置等] |
+| 2413993-徐锐 | Codex  VsCode插件，ChatGPT桌面版 | GPT6 |  |
 | 2413340-戴璐 |Codex |GPT6 | |
 | 2413410-韩芳逸 |Claude Code（VS Code 扩展） |DeepSeek-V4-Flash | |
 
@@ -461,19 +461,120 @@ static int copy_mm(uint32_t clone_flags, struct proc_struct *proc);
 
 ---
 
-### 练习：[练习标题]
+### 功能模块：进程调度
 
-**负责人：** [学号-姓名]
+**负责人：** 2413993-徐锐
 
-[按照练习的具体要求进行解答]
+#### 模块功能描述
+
+**需要实现/修改的函数：**
+
+```c
+// 列出本模块涉及的所有函数签名
+void cpu_idle(void);(kern/process/proc.c)
+void schedule(void);(kern/schedule/sched.c)
+void proc_run(struct proc_struct *proc);(kern/process/proc.c)
+void switch_to(struct context *from, struct context *to);(kern/process/switch.s)
+```
+
+**功能说明：**
+
+[简要描述该模块的功能，包括：
+
+- 该模块在整个系统中的作用
+- 需要处理的主要场景
+- 与其他模块的交互关系]
+
+#### 最终提示词
+
+以下是经过迭代优化后，最终成功实现该功能的提示词：
+
+````markdown
+### [PROMPT]
+在 `code/lab4/lab4_new` 中实现 Lab 4 功能模块三。仅修改 `kern/process/proc.c`、`kern/schedule/sched.c` 和 `kern/process/switch.S` 中标有 `LAB4 function3` 的区域。
+直接修改源码。模块二就绪后执行 `make qemu` 和 `make grade`，确认 `initproc` 实际执行到 `init_main`。报告实际验证结果及未完成验证的原因。
+### [RELY]
+- 模块二负责初始化 `idleproc`、`current` 和 `proc_list`，创建可运行的 `initproc`，并准备首次执行所需的 `context` 和 `trapframe`。
+- 调度使用 `PROC_RUNNABLE`、`need_resched`、`runs`、`list_next()` 和 `le2proc()`。临界区使用 `local_intr_save()` 和 `local_intr_restore()`。
+- `proc->pgdir` 保存页表根物理地址。Sv39 的 `satp` 写法参考 `enable_paging()`，写入后调用 `flush_tlb()`。
+### [GUARANTEE]
+保持四个接口的签名和调用约定。调度和切换的关键步骤在关中断状态下执行，各调用在返回时恢复进入前的中断状态。切换后 `current`、页表和寄存器上下文属于同一目标线程。
+### [SPECIFICATION]
+#### cpu_idle
+- **Pre-Condition**：当前线程为已初始化的 `idleproc`。
+- **Post-Condition**：持续循环。
+- **Case**：`current->need_resched` 为真时调用 `schedule()`，否则继续等待。
+#### schedule
+- **Pre-Condition**：`current`、`idleproc` 和 `proc_list` 已初始化。
+- **Post-Condition**：清除当前线程的 `need_resched`，选中线程的 `runs` 加一。选中不同线程时调用 `proc_run()`。
+- **Case**：当前为 `idleproc` 时从链表头开始，否则从当前节点的下一项开始循环扫描。选中首个 `PROC_RUNNABLE` 线程，找不到时选 `idleproc`。
+#### proc_run
+- **Pre-Condition**：目标线程可运行，页表根和上下文已准备好。
+- **Post-Condition**：目标线程接管 CPU。原线程恢复执行后，恢复其进入本函数前的中断状态。
+- **Case**：目标等于 `current` 时直接返回。否则在关中断后保存原 `current`、更新 `current`，按 `((uint64_t)SATP_MODE_SV39 << 60) | (proc->pgdir >> RISCV_PGSHIFT)` 写入 `satp`，刷新 TLB 后调用 `switch_to()`。禁用遗留的 `lsatp()` 写法。
+#### switch_to
+- **Pre-Condition**：`a0`、`a1` 分别指向原线程和目标线程的 `struct context`。
+- **Post-Condition**：按结构体布局保存原线程的 `ra`、`sp` 和 `s0–s11`，恢复目标线程的对应寄存器并执行 `ret`。
+- **Case**：已运行线程从原调用点继续。新线程经 `forkret → forkrets → __trapret` 恢复至 `kernel_thread_entry`。
+````
+
+#### 实现迭代过程
+
+本模块的实现经历了 0 次迭代，
+
+如果没有问题：
+
+**最终结果：**
+
+经过 0 次迭代，该模块最终：
+
+- ✅ 编译通过
+- ✅ 所有相关测试通过
+- ✅ 功能符合预期
 
 ---
 
-### Challenge：[Challenge标题]
+### 练习：
 
-**负责人：** [学号-姓名]
+**负责人：** [学号-姓名]，2413993-徐锐
 
-[按照Challenge的具体要求进行解答]
+见前功能模块部分有实现。
+
+---
+
+### Challenge：扩展练习
+
+**负责人：** 2413993-徐锐
+
+
+1. 说明语句 `local_intr_save(intr_flag); ... local_intr_restore(intr_flag);` 是如何实现开关中断的。
+
+   答：修改 `sstatus` 寄存器的第 1 位（从 0 开始编号），即`SIE`。关中断`local_intr_save(intr_flag)`将其清零(这里会保存关中断前原状态，因为关中断操作可能迭代)，开中断`local_intr_save(intr_flag)`将其置1.
+
+2. 深入理解不同分页模式的工作原理（思考题）。
+
+`get_pte()` 函数位于 `kern/mm/pmm.c`，用于在页表中查找或创建页表项，从而实现对指定线性地址对应的物理页的访问和映射操作。这在操作系统的分页机制下，是虚拟内存与物理内存建立映射关系的关键基础。
+
+- `get_pte()` 函数中有两段形式类似的代码，结合 `sv32`、`sv39`、`sv48` 的异同，解释这两段代码为什么如此相像。
+
+  **这两段在 Sv39 页表的不同层重复同一个操作：检查当前表项是否有效，缺少下一级页表时按需创建。**
+
+  - **第一段检查 `\*pdep1 & PTE_V`**。`pdep1` 是用 `PDX1(la)` 选出来的**根页表项**。若该项无效且 `create=1`，就用 `alloc_page()` 分配一页，清零后把新页表的物理页号写入 `*pdep1`。这样根页表项就指向了**中间页表**。
+  - **第二段检查 `\*pdep0 & PTE_V`**。代码沿 `*pdep1` 找到中间页表，再用 `PDX0(la)` 选出其中一项。若该项无效且 `create=1`，就重复同样的分配、清零和写入操作。这次 `*pdep0` 指向的是**末级页表**。
+
+  最后，代码用 `PTX(la)` 取出末级页表中目标 PTE 的地址。三级页表用了三个下标，但从第一张表走到第三张表跨两次，所以代码中有两段相似的处理。
+
+  结合三种分页模式来看，对 **4 KiB 普通页**，虚拟地址的低 12 位都是页内偏移。前面的索引每一段负责在一级页表中选一项：
+
+  - **Sv32** 有两个 10 位索引，走两级页表，到末级前下探**一次**。
+  - **Sv39** 有三个 9 位索引，走三级页表，到末级前下探**两次**，正好对应这两段代码。
+  - **Sv48** 有四个 9 位索引，走四级页表，到末级前下探**三次**。如果按本实验的写法实现，就会再多一段同样的处理。
+
+  两段代码相似是因为多级页表的每一次下探都遵循同样的规则，变的只是当前所在的层级和用来取表项的下标。
+
+- 目前 `get_pte()` 函数将页表项查找和页表页分配合并在一个函数里，你认为这种写法好吗？有没有必要把两个功能拆开？
+
+  我认为没有问题，没必要拆开，分开的话维护成本更高。
 
 ---
 
