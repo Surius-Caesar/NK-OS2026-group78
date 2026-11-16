@@ -594,11 +594,17 @@ proc_init() succeeded!
 [Test Process Create] PASS
 ```
 
-该测试验证了 `current == idleproc`、`idleproc` 的 PID/状态/内核栈/父子关系，以及 `initproc` 的 PID、就绪状态、父子关系和首次运行上下文均满足要求。完整的 `make grade` 还需要在功能模块三完成后统一验证 `[Test Schedule] PASS`。
+该测试验证了 `current == idleproc`、`idleproc` 的 PID/状态/内核栈/父子关系，以及 `initproc` 的 PID、就绪状态、父子关系和首次运行上下文均满足要求。功能模块三合入后，完整的 `make grade` 已通过，`[Test PMM]`、`[Test Process Create]`、`[Test Schedule]` 三组测试均正常。
 
 **测试截图：**
 
-![测试结果截图](./images/test_result.png)
+`make qemu` 运行结果（初始化完成后切换到 `initproc`，执行 `init_main` 并输出预期字符串）：
+
+![make qemu 运行结果](./images/qemu_result.png)
+
+`make grade` 测试结果（PMM、Process Create、Schedule 三组测试全部通过，总分 30/30）：
+
+![make grade 测试结果](./images/grade_result.png)
 
 ---
 
