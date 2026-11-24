@@ -15,8 +15,8 @@
 | 成员 | 负责的练习/模块 |
 |------|----------------|
 | 2413410-韩芳逸 | 功能模块一：用户态系统调用功能 |
-| 2413993-徐锐 |  |
-| 2413340-戴璐 |  |
+| 2413993-徐锐 | |
+| 2413340-戴璐 | 功能模块二、功能模块三  |
 
 实验报告如何分工？
 
@@ -46,7 +46,7 @@
 |------|------------|---------|------|
 | 2413410-韩芳逸 | Claude Code（VS Code 扩展） | DeepSeek-V4-Flash | 负责功能模块一 |
 | 2413993-徐锐 | [待补充] | [待补充] | |
-| 2413340-戴璐 | [待补充] | [待补充] | |
+| 2413340-戴璐 | Codex | GPT6 | |
 
 **说明：**
 - **AI 编程工具**：指具体使用的终端工具、编辑器插件、桌面应用或浏览器界面
@@ -309,17 +309,324 @@ kern/syscall/syscall.c:13:29: error: 'sys_fork' undeclared here (not in a functi
 
 ### 功能模块：创建加载第一个用户进程功能
 
-**负责人：** [待补充]
+**负责人：** 2413340-戴璐
 
-[由负责功能模块二的同学补充]
+#### 模块功能描述
+
+**需要实现/修改的函数：**
+
+```c
+static struct proc_struct *alloc_proc(void);
+int kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags);
+static int init_main(void *arg);
+static int user_main(void *arg);
+static int kernel_execve(const char *name, unsigned char *binary, size_t size);
+int do_execve(const char *name, size_t len, unsigned char *binary, size_t size);
+static int load_icode(unsigned char *binary, size_t size);
+int do_wait(int pid, int *code_store);
+```
+
+**功能说明：**
+
+- **该模块在整个系统中的作用**：这一部分负责把系统从“只有内核线程在运行”推进到“第一个用户程序真正开始执行”。proc_init 先建立 idleproc，再由它创建 init_main 所在的内核线程；init_main 继续创建 user_main，并通过 do_wait 等待后续用户进程退出，保证第一个用户进程建立后，内核仍然能够收束整个启动流程。user_main 的职责不是长期执行业务逻辑，而是充当一个过渡内核线程，它通过嵌入到镜像中的用户程序二进制符号，调用 kernel_execve 把自己从内核线程转换成用户进程。kernel_execve 负责搭出从内核态回到用户态所需的执行上下文，do_execve 负责回收旧地址空间并触发新程序加载，load_icode 则负责解析 ELF、建立新的虚拟内存布局、装入代码段和数据段、创建用户栈并设置 trapframe，最终让 CPU 能从用户程序入口开始执行。
+- **需要处理的主要场景**：内核线程创建与首次调度、普通构建或 `TEST` 构建选择嵌入的用户程序、ELF 段与用户栈装载、内核线程执行 `exec`、父进程等待及回收僵尸子进程，以及创建或装载失败后的清理。
+- **与其他模块的交互关系**：依赖 `do_fork`、`copy_thread` 和调度器建立线程；依赖虚拟内存接口建立页表；通过 `__trapret`、`RESTORE_ALL`、`sret` 进入用户态；与 `do_exit` 的僵尸态及唤醒逻辑配合完成回收。从启动路径上看，proc_init、kernel_thread、init_main、user_main、kernel_execve、do_execve、load_icode 和 do_wait 组成了从内核启动到用户程序启动的完整对外接口；从用户可见行为上看，系统最终应该表现为第一个用户程序能够被正确装入、正确切换到用户态、并且在退出后被父进程正确等待和回收。init_main 还应该持续作为系统启动后的收尾控制点，确保用户进程链路结束后内核状态稳定。
+
+#### 最终提示词
+
+以下是经过迭代优化后，最终成功实现该功能的提示词：
+
+````markdown
+## module2
+
+### [PROMPT]
+
+**任务**：完善 Lab5 的“创建加载第一个用户进程”模块，贯通 `proc_init → init_main → user_main → kernel_execve → do_execve → load_icode → __trapret → sret`，通过构造可供中断返回路径恢复的 trapframe，使 `sret` 一次完成跳转到 ELF 程序入口和从 S 态降到 U 态；并通过 `do_wait` 等待、回收退出的子进程。检查 `alloc_proc`、`kernel_thread`、`init_main`、`user_main`、`kernel_execve`、`do_execve`、`load_icode`、`do_wait` 及其依赖的 `copy_thread`，修正不符合下述规格的现有实现。
+
+**操作要求**：修改项目实际文件 `code/lab5/lab5_new/kern/process/proc.c` 中模块二相关实现，不重复定义已有函数，不改动功能模块三、四及 Challenge。保留 `lab5 function2` 标记注释；完成对应区域时，把其中的 `YOUR CODE` 替换为 `MY CODE:2413340`。保持 `proc.h` 中的公开接口和现有结构体布局。中文注释。
+
+**输出要求**：直接进行文件操作，使用下面`[RELY]`、`[GUARANTEE]`、`[SPECIFICATION]`部分的信息；以工程的真实定义为准，不要引入文件系统、设备管理等本实验范围之外的功能。完成后在 `code/lab5/lab5_new` 下执行 `make`，环境允许时再运行首个用户程序或执行 `make grade`。列出所用命令与失败信息，未执行的验证不得写成通过。
+
+### [RELY]
+
+- `kern/process/proc.c`：`proc_init` 已建立 `idleproc`，再用 `kernel_thread(init_main, "Hello world!!", 0)` 建立 `initproc`；`init_main` 当前创建 `user_main` 并调用 `do_wait(0, NULL)`。
+- `kern/process/entry.S`：`kernel_thread_entry` 将 `s1` 放入 `a0` 后跳转到 `s0`，线程函数返回时调用 `do_exit`。`copy_thread` 将 trapframe 放在新进程内核栈顶，并设置 `context.ra = forkret`、`context.sp = proc->tf`。
+- `KERNEL_EXECVE` 和 `KERNEL_EXECVE2` 使用链接进内核的用户 ELF 二进制符号；`user_main` 在 `TEST` 构建下选择测试程序，普通构建下选择 `exit`。
+- `kern/trap/trapentry.S` 已有 `__trapret`、`RESTORE_ALL`、`sret`；`RESTORE_ALL` 根据 `SSTATUS_SPP` 区分返回 S 态或 U 态，并在返回 U 态前将内核栈指针写入 `sscratch`。
+- `kern/process/proc.h` 定义 `proc_struct`、`PROC_SLEEPING`、`PROC_ZOMBIE`、`WT_CHILD`、`PF_EXITING` 和父子进程链接；`do_exit` 负责置僵尸态及唤醒父进程，`do_wait` 负责最终回收内核栈和 PCB。
+- `libs/elf.h` 定义 `elfhdr`、`proghdr`、`ELF_PT_LOAD` 及 `p_filesz/p_memsz`；`kern/mm/memlayout.h` 定义 `USTACKTOP`、`USTACKSIZE`。可使用 `mm_create`、`setup_pgdir`、`mm_map`、`pgdir_alloc_page`、`exit_mmap`、`put_pgdir`、`mm_destroy`、`user_mem_check`、`flush_tlb` 等现有接口。
+
+### [GUARANTEE]
+
+必须保持以下接口的签名与返回类型：
+
+```c
+static struct proc_struct *alloc_proc(void);
+int kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags);
+static int init_main(void *arg);
+static int user_main(void *arg);
+static int kernel_execve(const char *name, unsigned char *binary, size_t size);
+int do_execve(const char *name, size_t len, unsigned char *binary, size_t size);
+static int load_icode(unsigned char *binary, size_t size);
+int do_wait(int pid, int *code_store);
+```
+
+- 首个用户程序从有效 ELF 映像装入，其入口、用户栈、页表和 trapframe 一致，最终由 `sret` 同时把 PC 设为 ELF 入口并从 S 态切换到 U 态。
+- 内核线程仍可沿 `do_fork → copy_thread → forkret → forkrets → __trapret` 首次运行；`exec` 成功后当前进程的名称、`mm`、`pgdir`、`tf` 与新映像一致。
+- `do_wait(0, NULL)` 等待任一子进程；指定 PID 只等待当前进程的子进程；僵尸子进程及其资源仅回收一次。
+- 保留模块二以外的接口、进程树约定及数据布局。
+
+### [SPECIFICATION]
+
+#### alloc_proc
+
+**Pre-Condition**：内核内存分配器可用。
+**Post-Condition**：成功时返回状态为 `PROC_UNINIT`、各指针和链接处于安全初值的 PCB；分配失败返回 `NULL`。
+**Case 1**：供 `proc_init` 创建 idle 进程，或供 `do_fork` 创建新线程/进程。
+**Case 2**：内存不足时不返回半初始化 PCB。
+**Requirements**：初始 `mm` 为空，内核线程页表指向启动页表；初始化 `pid`、`tf`、`context`、等待状态及父子链接。
+
+#### kernel_thread
+
+**Pre-Condition**：`fn` 为有效入口函数，当前进程可创建子线程。
+**Post-Condition**：返回新线程 PID 或负错误码；首次运行时执行 `fn(arg)`，返回后进入 `do_exit`。
+**Case 1**：`proc_init` 创建 `init_main`，`init_main` 创建 `user_main`。
+**Case 2**：创建失败时不让未完成的线程进入可运行队列。
+**Requirements**：按 `kernel_thread_entry` 的 `s0/s1` 约定构造 trapframe；设置返回 S 态所需的 `SSTATUS_SPP`、`SSTATUS_SPIE`；与 `do_fork`、`copy_thread` 的首次运行上下文保持一致。
+
+#### init_main
+
+**Pre-Condition**：当前执行者是 `initproc` 内核线程，进程创建与调度机制可用。
+**Post-Condition**：创建 `user_main` 线程，等待其及启动阶段其他子进程退出并回收，最后输出收尾信息。
+**Case 1**：子进程退出后，`do_wait(0, NULL)` 成功并继续检查是否还有子进程。
+**Case 2**：创建失败时报告错误；没有待回收子进程时结束等待。
+**Requirements**：等待循环必须符合 `do_wait` 的实际返回语义，不遗漏僵尸子进程。
+
+#### user_main
+
+**Pre-Condition**：作为过渡内核线程运行，嵌入的用户程序符号存在。
+**Post-Condition**：成功时当前线程被转换为用户进程，控制流进入用户程序；失败时进入明确的错误路径。
+**Case 1**：普通构建使用 `KERNEL_EXECVE(exit)`。
+**Case 2**：定义 `TEST` 时使用 `KERNEL_EXECVE2(TEST, TESTSTART, TESTSIZE)`。
+**Requirements**：保留现有测试程序选择机制，成功的 `exec` 不应回到原来的内核线程函数继续执行。
+
+#### kernel_execve
+
+**Pre-Condition**：当前内核线程有有效的 `current->tf`，`name` 和嵌入 ELF 数据有效。
+**Post-Condition**：调用 `do_execve` 完成装载后，将 `sp` 指向预先构造的 trapframe，形成可供 `__trapret` 恢复的中断返回现场；`sret` 依据恢复的 `sepc` 和 `sstatus.SPP`，一次完成 PC 跳转到用户程序入口与特权级降至 U 态；失败时返回错误。
+**Case 1**：装载成功，`sp` 指向 `current->tf`，返回路径恢复用户入口和用户栈。
+**Case 2**：装载失败，不跳入 trap 返回路径。
+**Requirements**：不能只调用 `do_execve`；必须让 `__trapret` 从 `current->tf` 恢复返回现场后执行 `sret`。核对切换 `sp` 后的控制流与编译器约束。
+
+#### do_execve
+
+**Pre-Condition**：当前进程和 trapframe 有效；程序名可按调用来源安全读取。
+**Post-Condition**：成功时旧映像被新映像替换，进程名称与新程序一致；失败时遵守现有错误及退出约定。
+**Case 1**：首次从内核线程执行时 `current->mm == NULL`。
+**Case 2**：已有用户映像时，先切回内核页表并正确解除旧 `mm` 的引用，再装载新映像。
+**Requirements**：检查名称指针并限制名称长度；旧地址空间回收、`current->mm` 更新及新映像装载顺序须一致。
+
+#### load_icode
+
+**Pre-Condition**：`current->mm == NULL`，`binary` 与 `size` 描述待装载 ELF。
+**Post-Condition**：建立用户页表、可装载段和用户栈；构造返回用户态所需的 trapframe：`current->tf->epc` 为 ELF 入口（由 `__trapret` 恢复到 `sepc`），`gpr.sp` 为用户栈顶，清除 `status` 中的 `SSTATUS_SPP`、设置 `SSTATUS_SPIE`；切换 `satp` 并刷新 TLB。
+**Case 1**：`p_filesz < p_memsz` 时，文件内容正确复制，剩余 BSS 区域为零。
+**Case 2**：存在跨页的装载段时，每页内容、映射范围及用户权限正确。
+**Case 3**：ELF 无效、字段越界、地址溢出或页面分配失败时，清理已建立的 VMA、页表和 `mm`，不留下半初始化地址空间。
+**Requirements**：读取 ELF 头、程序头和段内容前结合 `size` 检查边界；验证用户虚拟地址范围；按 ELF 段权限与当前页表接口建立映射；用户栈须可由 U 态读写。
+
+#### do_wait
+
+**Pre-Condition**：`pid == 0` 表示任一子进程，非零表示指定子进程；`code_store` 可为 `NULL`。
+**Post-Condition**：找到僵尸子进程时按需写入退出码，摘除链接并释放内核栈及 PCB，返回 0；无符合条件的子进程时返回错误。
+**Case 1**：子进程尚在运行时，父进程以 `WT_CHILD` 睡眠，被唤醒后重新查找。
+**Case 2**：指定 PID 不存在或不是当前进程的子进程时，不回收无关进程。
+**Case 3**：`code_store` 不可写，或等待进程收到退出标志时，按现有错误与退出约定处理。
+**Requirements**：与 `do_exit` 的僵尸态和父进程唤醒逻辑一致；避免丢失唤醒、重复摘链或重复释放。
+````
+#### 实现迭代过程
+
+本模块根据提示词检查并完善已有实现，在 WSL Ubuntu 中运行后发现启动收尾问题，并据此修正。迭代过程如下：
+
+---
+
+##### 第一次迭代：发现并修复 initproc 退出问题
+
+**遇到的问题：**
+
+- 问题1：根据提示词检查代码，补充 `load_icode()` 的 ELF 边界和页权限检查、`do_wait()` 的睡眠前中断保护后，使用 WSL Ubuntu 编译并启动 QEMU。`exit` 用户程序完成 `fork`、`waitpid`，输出 `exit pass.` 和 `init check memory pass.`，随后却报 `kernel panic at kern/process/proc.c:508: initproc exit.`。
+- 原因：`init_main()` 的 `while (do_wait(0, NULL) == 0)` 在没有子进程可等待时结束，打印收尾信息后直接 `return 0`。`kern/process/entry.S` 中的 `kernel_thread_entry` 随即把返回值传给 `do_exit()`；而 `do_exit()` 明确禁止 `initproc` 退出。
+
+**问题解决策略：**
+
+- 针对问题1：在 `init_main()` 打印收尾信息后持续调用 `schedule()`，避免返回到 `kernel_thread_entry` 的 `do_exit()`，使 `initproc` 继续作为系统的收尾控制点。重新构建并启动 QEMU 后，再次看到 `waitpid 3 ok.`、`exit pass.`、`all user-mode processes have quit.` 和 `init check memory pass.`；随后持续出现时钟中断输出，5 秒观察窗口内未再出现该 panic，QEMU 由 `timeout` 主动终止。
+
+---
+
+##### 最终结果
+
+- :white_check_mark: 首个用户程序在 QEMU 中启动、执行 `fork/wait` 并输出 `exit pass.`；修复后观察窗口内未再出现 `initproc exit` panic。
+- :white_check_mark: 使用 WSL Ubuntu 的 RISC-V 工具链完成编译。仓库现有 `kern/mm/kmalloc.c` 有指针类型诊断，完整重编译时仅在命令行加入 `-Wno-error=int-conversion` 将其降为警告，未修改该文件。
+
+**关键改进点总结：**
+
+1. 本次问题表明，`init_main()` 的提示词还应明确“收尾后不能返回并导致 `initproc` 退出”，使后续使用提示词时覆盖用户程序退出后的内核控制流。
+2. 用实际 QEMU 输出确认 `sret` 后用户程序可以运行，并把 `exit pass.` 之后的 panic 与用户程序本身的运行结果分开分析。
 
 ---
 
 ### 功能模块：复制用户进程功能
 
-**负责人：** [待补充]
+**负责人：** 2413340-戴璐
+#### 模块功能描述
 
-[由负责功能模块三的同学补充]
+**需要实现/修改的函数：**
+
+```c
+int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) (kern/process/proc.c)
+static int copy_mm(uint32_t clone_flags, struct proc_struct *proc) (kern/process/proc.c)
+int dup_mmap(struct mm_struct *to, struct mm_struct *from) (kern/mm/vmm.c)
+int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end, bool share) (kern/mm/pmm.c)
+```
+
+**功能说明：**
+这一部分负责把父进程的执行环境复制成一个新的子进程，使子进程拥有自己的进程控制块、内核栈、trapframe 和用户地址空间映像。`do_fork` 是整条链路的总入口，它需要把子进程创建出来并接入进程树，同时准备好后续调度所需的执行上下文；`copy_mm` 是在 `lab4` 已有实现基础上的更新点，它决定新进程是与父进程共享地址空间还是复制地址空间，在本实验的普通 fork 路径中主要体现为复制用户地址空间；`dup_mmap` 负责按 `vma` 粒度复制父进程的合法虚拟内存区域；`copy_range` 则负责按页粒度复制页面内容并建立新的页表映射。整体上，这条链路保证了子进程既能继承父进程看到的程序和数据，又能在之后独立运行、独立调度、独立退出。
+
+#### 最终提示词
+
+以下为根据当前 Lab5 代码及实验文档设计、已用于检查和完善模块三代码的提示词：
+
+````markdown
+## module3
+
+### [PROMPT]
+
+**任务**：完善 Lab5 的“复制用户进程”模块，检查并修正 `do_fork()`、`copy_mm()`、`dup_mmap()`、`copy_range()` 的现有实现，使用户态 `fork` 能复制进程控制块、内核栈、trapframe、VMA 和已映射的用户页面。父进程获得子进程 PID，子进程从同一用户执行位置继续并获得返回值 0；内核线程及 `CLONE_VM` 路径仍可使用同一创建框架。
+
+**操作要求**：修改项目实际文件，仅处理 `code/lab5/lab5_new/kern/process/proc.c`、`kern/mm/vmm.c`、`kern/mm/pmm.c` 中 `lab5 function3 YOUR CODE` 标记对应的上述四个函数。它们已有实现，应按下述规格检查并修正，不重复添加函数。保留标记注释，将模块三标记中的 `YOUR CODE` 替换为 `MY CODE:2413340`；保持已有函数签名、结构体布局，以及功能模块一、二 的代码不变。新添加的注释应为中文。
+
+**输出要求**：说明各函数的改动、失败路径及验证结果。在 `code/lab5/lab5_new` 下执行 `make`；环境允许时运行 `forktest`、`forktree` 等相关用例或 `make grade`。未执行或被其他错误阻断的测试不得记为通过。
+
+### [RELY]
+
+- `kern/syscall/syscall.c`：`sys_fork()` 以 `do_fork(0, current->tf->gpr.sp, current->tf)` 发起普通用户进程复制；系统调用返回值写入父进程 trapframe 的 `a0`。
+- `kern/process/proc.c`：已有 `alloc_proc()`、`setup_kstack()`、`put_kstack()`、`copy_thread()`、`get_pid()`、`hash_proc()`、`set_links()`、`wakeup_proc()`、`forkret()`。`copy_thread()` 把 trapframe 放在子进程内核栈顶，将子进程的 `gpr.a0` 置 0，并设置首次调度的 `context.ra/sp`。`proc_struct` 通过 `parent/cptr/optr/yptr` 维护进程树，通过 `list_link/hash_link` 接入进程表。
+- `copy_mm()` 可使用 `current->mm`、`mm_create()`、`setup_pgdir()`、`lock_mm()/unlock_mm()`、`dup_mmap()`、`mm_count_inc()`、`set_mm_count()`、`exit_mmap()`、`put_pgdir()`、`mm_destroy()`；`CLONE_VM` 在 `libs/unistd.h` 中定义。
+- `kern/mm/vmm.c`：`mm_struct` 持有按地址排序的 `mmap_list` 和页表；`vma_struct` 保存 `[vm_start, vm_end)` 与 `vm_flags`。可使用 `vma_create()`、`insert_vma_struct()`、`copy_range()`。普通 `fork` 使用逐 VMA、逐页复制；共享 `mm` 的路径在 `copy_mm()` 中处理。
+- `kern/mm/pmm.c`：可使用 `get_pte()`、`pte2page()`、`alloc_page()`、`page2kva()`、`page_insert()`、`free_page()`；`PTE_USER` 覆盖用户页的 `R/W/X/U/V` 权限位。`copy_range()` 的 `share` 参数为真时建立到同一物理页的映射，为假时复制整页。未映射页面可以跳过。
+- `kern/process/proc.h` 定义 `MAX_PROCESS`、`PROC_UNINIT`、`PROC_RUNNABLE` 和 `proc_struct`；`-E_NO_FREE_PROC` 表示进程数达到上限，`-E_NO_MEM` 表示分配失败。调度器只应看到初始化完成且已唤醒的子进程。
+
+### [GUARANTEE]
+
+必须保持以下接口及其返回类型：
+
+```c
+int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf);
+static int copy_mm(uint32_t clone_flags, struct proc_struct *proc);
+int dup_mmap(struct mm_struct *to, struct mm_struct *from);
+int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end, bool share);
+```
+
+- 普通用户态 `fork` 成功后，父进程得到唯一正 PID，子进程的 `a0` 为 0；子进程有独立 PCB、内核栈、trapframe、VMA、页表和用户物理页，复制时刻的页面内容与父进程一致，之后双方写入互不影响。
+- `CLONE_VM` 路径正确增加同一 `mm` 的引用计数，不把共享地址空间误当作普通 `fork` 的独立副本；内核线程的 `current->mm == NULL` 路径不复制用户地址空间。
+- 子进程完成 PID、父子关系、哈希表及进程表挂接后才成为可运行状态。任何失败都返回负错误码，并撤销本次创建中已取得的资源和引用，不留下可见的半初始化进程。
+- 保持 `copy_thread()`、进程树、页表接口和模块三以外的代码约定；不实现 Copy on Write 扩展练习。
+
+### [SPECIFICATION]
+
+#### do_fork
+
+**Pre-Condition**：`current` 和 `tf` 有效；`clone_flags` 决定地址空间共享方式，`stack` 是新进程的初始栈指针参数；进程管理器已初始化。
+**Post-Condition**：成功时返回子进程 PID；子进程具有独立内核栈和 trapframe，已接入进程树及调度器，首次运行通过现有 trap 返回路径继续执行。失败时返回负错误码且无残留子进程。
+**Case 1**：普通用户进程 `fork` 使用 `clone_flags == 0`，父进程得到新 PID，子进程以 `a0 == 0` 从相同用户执行位置继续。
+**Case 2**：内核线程创建时父进程没有用户 `mm`，仍应建立 PCB、内核栈和首次运行现场，不访问不存在的用户页表。
+**Case 3**：达到 `MAX_PROCESS`、PCB 或内核栈分配失败、地址空间复制失败时，返回相应错误并按逆序清理已分配资源。
+**Requirements**：保持 `copy_thread()` 的返回值与栈语义；在合适的关中断临界区完成 PID 分配、哈希表和进程树挂接，初始化完成后才调用 `wakeup_proc()`。
+
+#### copy_mm
+
+**Pre-Condition**：子进程 PCB 已分配但未发布；`current` 指向父进程，`proc->mm` 尚未绑定用户地址空间。
+**Post-Condition**：无用户 `mm` 时子进程沿用内核页表；设置 `CLONE_VM` 时子进程共享父进程 `mm` 且引用计数增加一次；普通 `fork` 时子进程获得独立的 `mm`、页表及用户映射。
+**Case 1**：`current->mm == NULL`，返回成功且不尝试复制用户空间。
+**Case 2**：`clone_flags & CLONE_VM`，共享同一 `mm`，`pgdir` 与该 `mm` 对应，退出时由引用计数决定最终回收时机。
+**Case 3**：普通 `fork` 创建新 `mm` 和页表，锁定父 `mm` 后调用 `dup_mmap()`；复制失败时解锁并清理新地址空间，不更改父进程映像。
+**Requirements**：复制成功后才把新 `mm/pgdir` 发布到子进程并设置引用计数；锁与引用计数在所有返回路径上保持平衡。
+
+#### dup_mmap
+
+**Pre-Condition**：`from` 有有效且按地址排序的 VMA 链表和页表；`to` 是已创建页表、尚未包含父进程 VMA 的目标 `mm`。
+**Post-Condition**：目标 `mm` 中的 VMA 区间、顺序和权限与源一致；每个已映射用户页由 `copy_range()` 复制，未映射区间保持未映射。
+**Case 1**：多个 VMA 或含空洞的 VMA 被逐一复制，目标区间不重叠且权限不变。
+**Case 2**：VMA 创建或页复制失败时返回错误，由调用者清理已插入的目标 VMA 和页面；源 `mm` 不受影响。
+**Requirements**：普通 `fork` 的 `copy_range(..., false)` 不共享物理页；不得把 `CLONE_VM` 的共享语义混入此函数。
+
+#### copy_range
+
+**Pre-Condition**：`start/end` 为页对齐的有效用户地址，区间为 `[start, end)`；`from/to` 是有效页表，`share` 指定是否共享物理页。
+**Post-Condition**：源区间中每个有效用户页在目标页表建立相应映射；普通复制时目标页内容与源页一致且物理页独立；共享模式下双方映射同一物理页并保持正确引用计数和权限。
+**Case 1**：源页表项不存在或页面未映射时跳过，目标对应地址仍未映射。
+**Case 2**：`share == false` 时分配目标页、复制完整 `PGSIZE` 字节并建立映射，之后父子写入互不影响。
+**Case 3**：`share == true` 时复用源物理页并建立目标映射，不复制页面内容。
+**Case 4**：目标页表或物理页分配、映射失败时返回 `-E_NO_MEM`，释放当前尚未接入页表的新页；已接入的映射由上层失败清理路径回收。
+**Requirements**：从源 PTE 保留实际用户访问权限；遍历只覆盖 `[start, end)`，跳过缺失页表时不越过尚需检查的页；通过 `page_insert()` 维护映射和引用计数，不引入 COW。
+````
+
+#### 实现迭代过程
+
+本模块按提示词检查已有实现，并在 WSL Ubuntu 的临时工程副本中编译、运行。`forktree` 停滞的定位与修复也记录在下面；该问题最终落在模块三依赖的进程退出路径。
+
+---
+
+##### 第一次迭代：核对复制路径与错误传播
+
+**遇到的问题：**
+
+- 问题1：原有 `copy_range()` 先用 `get_pte(to, start, 1)` 建立或查询目标页表，随后 `page_insert()` 再次查询同一位置，操作重复；跳过缺失页表的注释写成 4MB，但工程的 `PTSIZE` 是 2MB。
+- 问题2：`dup_mmap()`、`copy_mm()` 把下层复制失败统一改写成 `-E_NO_MEM`，未保留实际返回值；`do_fork()` 在挂接子进程后先恢复中断，再调用 `wakeup_proc()`，发布与转为可运行状态分属两个临界区。
+
+**问题解决策略：**
+
+- 针对问题1：删去重复的目标 PTE 查询，交由 `page_insert()` 建立映射并维护页面引用计数；将缺失末级页表的注释改为 2MB。普通复制仍分配新物理页、复制完整页面；`share` 路径仍映射源物理页。
+- 针对问题2：逐层返回复制函数的实际错误码；在 `do_fork()` 的同一关中断临界区内完成 PID、哈希表、进程树挂接和唤醒。保留已有的失败清理顺序及 `copy_thread()` 中子进程 `a0 = 0` 的约定。
+
+---
+
+##### 第二次迭代：定位并修复 forktree 停滞
+
+**遇到的问题：**
+
+- 问题1：QEMU 运行 `forktest` 输出 `forktest pass.`，但 `forktree` 只输出根进程 `0002: I am ''`，延长观察到 20 秒仍没有子进程输出。恢复修改前的模块三 `pmm.c`、`vmm.c` 进行对照后，现象仍在，说明不能仅按页面复制问题处理。
+- 定位：QEMU 异常日志显示停滞期间持续发生用户态 `ecall`。在临时副本的 `forktree` 中加入定位输出后，根进程的两次 `fork` 分别返回 PID 3 和 4；停滞发生在根进程随后退出时。检查 `do_exit()` 发现，过继子进程的循环误写成 `proc->cptr = proc->optr`，没有更新循环条件 `current->cptr`，导致父进程有存活子进程时无限循环。`forktest` 先等待子进程，因而没有触发这条路径。
+
+**问题解决策略：**
+
+- 针对问题1：将 `do_exit()` 中该行改为 `current->cptr = proc->optr`，使循环逐个摘下当前进程的子进程，再过继给 `initproc`。这一行属于功能模块四的退出代码，但它是模块三 `forktree` 场景必经的依赖路径，因此在定位原因后作最小修复。重新运行原始 `forktree`，输出了从空路径到四层路径的 31 个进程节点，随后出现 `all user-mode processes have quit.` 和 `init check memory pass.`；修复后再次运行 `forktest`，仍输出 `forktest pass.`。
+
+---
+
+##### 第三次迭代：处理验证环境阻断
+
+**遇到的问题：**
+
+- 问题1：直接执行 `make grade` 时，仓库中的 `tools/grade.sh` 使用 CRLF 换行，WSL 的 `sh` 无法解析；只转换 `/tmp` 中的脚本副本后，评分构建又被现有 `kern/mm/kmalloc.c` 的指针类型诊断阻断。
+
+**问题解决策略：**
+
+- 针对问题1：在 WSL 临时工程副本中编译并运行单项用例，命令行加入 `-Wno-error=int-conversion`，只把上述诊断降为警告，不修改 `kmalloc.c` 或仓库评分脚本。`forktest` 与 `forktree` 均实际运行并观察到预期输出；评分脚本仍未完整运行，因此不报告 `make grade` 分数。
+
+---
+
+##### 最终结果
+
+- :white_check_mark: 模块三的四个函数按提示词完成检查和局部修正，保留接口及 `MY CODE:2413340` 标记；WSL 临时副本可在上述临时编译选项下完成构建。
+- :white_check_mark: QEMU 中 `forktest` 输出 `forktest pass.`；修复 `do_exit` 后，`forktree` 输出完整的 31 个进程节点及启动收尾信息，不再停滞。修复后再次运行 `forktest`，未出现回归。
+- :question: `make grade` 仍被脚本换行及现有编译诊断阻断，未获得完整评分结果；上述运行结果也不覆盖所有错误路径和边界条件。
+
+**关键改进点总结：**
+
+1. `forktest` 覆盖了父进程先等待子进程的路径；`forktree` 覆盖父进程先退出、子进程成为孤儿的路径。两者结合才暴露进程树过继循环的错误。
+2. `do_exit` 遍历子进程时必须更新 `current->cptr`，否则循环条件不变，内核会一直停在退出流程。定位输出应先确认 `fork` 本身是否成功，再沿父进程的后续控制流排查。
+3. 模块三的复制逻辑依赖模块四的退出与过继逻辑；出现跨模块故障时，应记录实际修改范围及验证证据。完整评分未运行成功时，不填写总分。
 
 ---
 

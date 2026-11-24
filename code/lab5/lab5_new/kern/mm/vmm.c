@@ -202,7 +202,7 @@ out:
     return ret;
 }
 
-//lab5 function3 YOUR CODE
+//lab5 function3 MY CODE:2413340
 // dup_mmap - 按 vma 粒度把 from 的地址空间复制到 to，并逐页复制页表映射。
 int dup_mmap(struct mm_struct *to, struct mm_struct *from)
 {
@@ -219,9 +219,11 @@ int dup_mmap(struct mm_struct *to, struct mm_struct *from)
         insert_vma_struct(to, nvma);
 
         bool share = 0;
-        if (copy_range(to->pgdir, from->pgdir, vma->vm_start, vma->vm_end, share) != 0)
+        int ret = copy_range(to->pgdir, from->pgdir, vma->vm_start, vma->vm_end, share);
+        if (ret != 0)
         {
-            return -E_NO_MEM;
+            // 调用者负责清理已经复制到目标地址空间的 VMA 和页面。
+            return ret;
         }
     }
     return 0;

@@ -89,7 +89,7 @@ static void copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapfram
 static int copy_mm(uint32_t clone_flags, struct proc_struct *proc);
 static int init_main(void *arg);
 
-//lab5 function2 YOUR CODE update alloc_proc
+//lab5 function2 MY CODE:2413340 更新 alloc_proc
 // alloc_proc - 分配并初始化一个 PCB，所有字段先置于安全初值。
 static struct proc_struct *
 alloc_proc(void)
@@ -301,7 +301,7 @@ find_proc(int pid)
     return NULL;
 }
 
-//lab5 function2 YOUR CODE update kernel_thread
+//lab5 function2 MY CODE:2413340 更新 kernel_thread
 // kernel_thread - 创建入口为 fn(arg) 的内核线程。
 int kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags)
 {
@@ -362,7 +362,7 @@ put_pgdir(struct mm_struct *mm)
     free_page(kva2page(mm->pgdir));
 }
 
-//lab5 function3 YOUR CODE update copy_mm
+//lab5 function3 MY CODE:2413340 更新 copy_mm
 // copy_mm - 根据 clone_flags 决定共享还是复制父进程的地址空间。
 static int
 copy_mm(uint32_t clone_flags, struct proc_struct *proc)
@@ -397,15 +397,12 @@ copy_mm(uint32_t clone_flags, struct proc_struct *proc)
     }
 
     lock_mm(oldmm);
-    {
-        int ret = dup_mmap(mm, oldmm);
-        if (ret != 0)
-        {
-            unlock_mm(oldmm);
-            goto bad_free_mm;
-        }
-    }
+    int ret = dup_mmap(mm, oldmm);
     unlock_mm(oldmm);
+    if (ret != 0)
+    {
+        goto bad_free_mm;
+    }
 
     set_mm_count(mm, 1);
     proc->mm = mm;
@@ -416,11 +413,11 @@ bad_free_mm:
     exit_mmap(mm);
     put_pgdir(mm);
     mm_destroy(mm);
-    return -E_NO_MEM;
+    return ret;
 }
 
 
-//lab5 function2 YOUR CODE
+//lab5 function2 MY CODE:2413340
 // copy_thread - 把 trapframe 和首次运行上下文放到新进程的内核栈上。
 static void
 copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf)
@@ -440,7 +437,7 @@ copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf)
 }
 
 
-//lab5 function3 YOUR CODE
+//lab5 function3 MY CODE:2413340
 // do_fork - 基于当前进程创建新进程/线程。
 int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
 {
@@ -477,10 +474,10 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
         proc->pid = get_pid();
         hash_proc(proc);
         set_links(proc);
+        // 子进程完整接入进程表后，才允许调度器选中它。
+        wakeup_proc(proc);
     }
     local_intr_restore(intr_flag);
-
-    wakeup_proc(proc);
 
     ret = proc->pid;
 
@@ -541,7 +538,7 @@ int do_exit(int error_code)
         while (current->cptr != NULL)
         {
             proc = current->cptr;
-            proc->cptr = proc->optr;
+            current->cptr = proc->optr;
 
             proc->yptr = NULL;
             if ((proc->optr = initproc->cptr) != NULL)
@@ -614,7 +611,7 @@ int do_kill(int pid)
 #define KERNEL_EXECVE2(x, xstart, xsize) __KERNEL_EXECVE2(x, xstart, xsize)
 
 
-//lab5 function2 YOUR CODE
+//lab5 function2 MY CODE:2413340
 // load_icode - 解析 ELF、建立新的用户地址空间并配置好用户态入口与栈。
 static int
 load_icode(unsigned char *binary, size_t size)
@@ -622,6 +619,21 @@ load_icode(unsigned char *binary, size_t size)
     if (current->mm != NULL)
     {
         panic("load_icode: current->mm must be empty.\n");
+    }
+
+    // 读取 ELF 元数据和程序段前，先确认它们没有超出二进制映像的范围。
+    if (binary == NULL || size < sizeof(struct elfhdr))
+    {
+        return -E_INVAL_ELF;
+    }
+    struct elfhdr *elf = (struct elfhdr *)binary;
+    if (elf->e_magic != ELF_MAGIC ||
+        elf->e_phentsize != sizeof(struct proghdr) ||
+        elf->e_phoff > size ||
+        elf->e_phnum > (size - elf->e_phoff) / sizeof(struct proghdr) ||
+        !USER_ACCESS(elf->e_entry, elf->e_entry + 1))
+    {
+        return -E_INVAL_ELF;
     }
 
     int ret = -E_NO_MEM;
@@ -635,13 +647,7 @@ load_icode(unsigned char *binary, size_t size)
         goto bad_pgdir_cleanup_mm;
     }
 
-    struct elfhdr *elf = (struct elfhdr *)binary;
     struct proghdr *ph = (struct proghdr *)(binary + elf->e_phoff);
-    if (elf->e_magic != ELF_MAGIC)
-    {
-        ret = -E_INVAL_ELF;
-        goto bad_elf_cleanup_pgdir;
-    }
 
     for (int i = 0; i < elf->e_phnum; i++, ph++)
     {
@@ -649,7 +655,10 @@ load_icode(unsigned char *binary, size_t size)
         {
             continue;
         }
-        if (ph->p_filesz > ph->p_memsz)
+        if (ph->p_filesz > ph->p_memsz || ph->p_offset > size ||
+            ph->p_filesz > size - ph->p_offset || ph->p_memsz == 0 ||
+            ph->p_va > USERTOP || ph->p_memsz > USERTOP - ph->p_va ||
+            !USER_ACCESS(ph->p_va, ph->p_va + ph->p_memsz))
         {
             ret = -E_INVAL_ELF;
             goto bad_cleanup_mmap;
@@ -665,11 +674,22 @@ load_icode(unsigned char *binary, size_t size)
             vm_flags |= VM_READ;
         if (vm_flags & VM_WRITE)
             vm_flags |= VM_READ;
+        if (vm_flags == 0)
+        {
+            ret = -E_INVAL_ELF;
+            goto bad_cleanup_mmap;
+        }
 
         if ((ret = mm_map(mm, ph->p_va, ph->p_memsz, vm_flags, NULL)) != 0)
         {
             goto bad_cleanup_mmap;
         }
+
+        // RISC-V 要求可写页面同时具有读权限。
+        uint32_t perm = PTE_U;
+        if (vm_flags & VM_READ) perm |= PTE_R;
+        if (vm_flags & VM_WRITE) perm |= PTE_W;
+        if (vm_flags & VM_EXEC) perm |= PTE_X;
 
         // 逐页建立映射，新页先清零（同时覆盖 bss 部分）。
         uintptr_t seg_end = ph->p_va + ph->p_memsz;
@@ -677,8 +697,7 @@ load_icode(unsigned char *binary, size_t size)
         {
             if (get_page(mm->pgdir, va, NULL) == NULL)
             {
-                struct Page *page = pgdir_alloc_page(mm->pgdir, va,
-                                                     PTE_U | PTE_R | PTE_W | PTE_X);
+                struct Page *page = pgdir_alloc_page(mm->pgdir, va, perm);
                 if (page == NULL)
                 {
                     ret = -E_NO_MEM;
@@ -740,7 +759,6 @@ load_icode(unsigned char *binary, size_t size)
 
 bad_cleanup_mmap:
     exit_mmap(mm);
-bad_elf_cleanup_pgdir:
     put_pgdir(mm);
 bad_pgdir_cleanup_mm:
     mm_destroy(mm);
@@ -754,13 +772,10 @@ int do_execve(const char *name, size_t len, unsigned char *binary, size_t size)
     struct mm_struct *mm = current->mm;
 
     // name 在首次内核线程启动时位于内核空间，之后可能来自用户空间。
-    if (!user_mem_check(mm, (uintptr_t)name, len, 0))
+    if (name == NULL || len == 0 || len > PROC_NAME_LEN ||
+        !user_mem_check(mm, (uintptr_t)name, len, 0))
     {
         return -E_INVAL;
-    }
-    if (len > PROC_NAME_LEN)
-    {
-        len = PROC_NAME_LEN;
     }
     char local_name[PROC_NAME_LEN + 1];
     memset(local_name, 0, sizeof(local_name));
@@ -846,6 +861,8 @@ int do_wait(int pid, int *code_store)
     bool intr_flag, haskid;
 repeat:
     haskid = 0;
+    // 将扫描子进程和进入睡眠状态放在同一临界区，避免错过 do_exit 的唤醒。
+    local_intr_save(intr_flag);
     if (pid != 0)
     {
         proc = find_proc(pid);
@@ -877,15 +894,18 @@ repeat:
         current->state = PROC_SLEEPING;
         current->wait_state = WT_CHILD;
         schedule();
+        local_intr_restore(intr_flag);
         if (current->flags & PF_EXITING)
         {
             do_exit(-E_KILLED);
         }
         goto repeat;
     }
+    local_intr_restore(intr_flag);
     return -E_BAD_PROC;
 
 found:
+    local_intr_restore(intr_flag);
     if (proc == idleproc || proc == initproc)
     {
         panic("wait idleproc or initproc.\n");
@@ -921,9 +941,13 @@ init_main(void *arg)
     }
 
     cprintf("all user-mode processes have quit.\n");
-    // init check memory pass
+    // 输出初始化阶段的内存检查结果。
     cprintf("init check memory pass.\n");
-    return 0;
+    // initproc 需持续运行，以便接管并回收后续出现的孤儿进程。
+    for (;;)
+    {
+        schedule();
+    }
 }
 
 // 进程调度与切换（Lab4 遗留代码，在 Lab5 中继续使用）。

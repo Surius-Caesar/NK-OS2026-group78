@@ -387,7 +387,7 @@ void exit_range(pde_t *pgdir, uintptr_t start, uintptr_t end)
 }
 
 
-//lab5 function3 YOUR CODE
+//lab5 function3 MY CODE:2413340
 // copy_range - 把 from 页表 [start, end) 的映射复制到 to 页表。
 // share 为真时共享物理页，否则为每个页面分配新页并复制内容。
 int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end, bool share)
@@ -397,19 +397,15 @@ int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end, bool shar
 
     do
     {
-        pte_t *ptep = get_pte(from, start, 0), *nptep;
+        pte_t *ptep = get_pte(from, start, 0);
         if (ptep == NULL)
         {
-            // 该 4MB 区间没有页表，直接跳过。
+            // 当前 2MB 区间没有末级页表，跳到下一个区间。
             start = ROUNDDOWN(start + PTSIZE, PTSIZE);
             continue;
         }
         if (*ptep & PTE_V)
         {
-            if ((nptep = get_pte(to, start, 1)) == NULL)
-            {
-                return -E_NO_MEM;
-            }
             uint32_t perm = (*ptep & PTE_USER);
             struct Page *page = pte2page(*ptep);
             struct Page *npage;
